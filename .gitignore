@@ -9,3 +9,16 @@ coverage/
 *.sqlite-wal
 .env
 
+
+# Internal AI-assisted development infrastructure.
+# These files must stay on disk for Codex and Claude Code but are not part of
+# the delivered product. See AGENTS.md for what they contain.
+AGENTS.md
+CLAUDE.md
+QVAC.md
+QVAC_DERIVED.md
+.claude/
+.codex/
+GAP_ANALYSIS.md
+ROADMAP.md
+TRACEABILITY.md
