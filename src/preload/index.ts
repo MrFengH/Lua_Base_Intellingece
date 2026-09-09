@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, type InstalledBaseApi } from '@/shared';
+import { IPC_CHANNELS } from '@/shared/ipc/channels';
+import type { InstalledBaseApi } from '@/shared/ipc/contracts';
 
 const api: InstalledBaseApi = {
   getInferenceStatus: () => ipcRenderer.invoke(IPC_CHANNELS.inferenceStatus),

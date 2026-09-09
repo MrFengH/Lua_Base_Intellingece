@@ -20,6 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "seed": "tsx scripts/seed.ts",
+    "app:smoke": "npm run build && tsx scripts/app-smoke.ts",
     "qvac:smoke": "tsx scripts/qvac-smoke.ts",
     "sqlite:smoke": "tsx scripts/sqlite-smoke.ts"
   },

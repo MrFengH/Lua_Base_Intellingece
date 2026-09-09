@@ -105,3 +105,45 @@ The seed is guarded by `synthetic-development-v1`, so reopening the application 
 - repository/query ports: allow projection or persistence evolution without coupling the domain to SQLite.
 
 No remote sync or delegated inference is implied by these seams.
+
+## Module responsibilities
+
+| Path                              | Responsibility                                                                                                                                      | May import `@qvac/sdk` | May import Electron |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------- |
+| `src/domain/`                     | Entities, value objects, and pure rules: normalization, age and installation derivation, confidence scoring, duplicate scoring, follow-up selection | no                     | no                  |
+| `src/application/contracts/`      | Zod schemas and view types crossing the boundary, including the extraction schema                                                                   | no                     | no                  |
+| `src/application/ports/`          | Interfaces infrastructure must implement: extraction, repositories, clock, ids, speech-to-text                                                      | no                     | no                  |
+| `src/application/prompts/`        | The extraction system prompt and prompt builder                                                                                                     | no                     | no                  |
+| `src/application/use-cases/`      | `CaptureWorkflowService` and `InstalledBaseQueryService`                                                                                            | no                     | no                  |
+| `src/infrastructure/qvac/`        | The QVAC adapter, the only SDK call site                                                                                                            | **yes**                | no                  |
+| `src/infrastructure/mock/`        | The deterministic Development Mock adapter                                                                                                          | no                     | no                  |
+| `src/infrastructure/persistence/` | `node:sqlite` database, migrations, repository                                                                                                      | no                     | no                  |
+| `src/infrastructure/seed/`        | Idempotent synthetic fixtures                                                                                                                       | no                     | no                  |
+| `src/infrastructure/platform/`    | System clock and id generation                                                                                                                      | no                     | no                  |
+| `src/main/`                       | Window, composition root, IPC registration                                                                                                          | no                     | **yes**             |
+| `src/preload/`                    | The narrow typed bridge                                                                                                                             | no                     | **yes**             |
+| `src/renderer/`                   | React UI. No Node, no filesystem, no SDK                                                                                                            | no                     | no                  |
+| `src/shared/`                     | IPC channel names, request schemas, the API type                                                                                                    | no                     | no                  |
+
+Prompts and the extraction schema live in the application layer on purpose. They describe what
+the business wants extracted, not how an engine is invoked, so swapping engines must not
+rewrite them. See [QVAC_ARCHITECTURE.md](QVAC_ARCHITECTURE.md) for the QVAC-specific rules and
+[DATA_SCHEMA.md](DATA_SCHEMA.md) for what the records mean.
+
+## Not implemented — PLANNED
+
+Marked here so nothing in this document is read as describing working code.
+
+- **Voice capture and speech-to-text.** `SpeechToTextPort` exists in
+  `src/application/ports/platform.ts` with no implementation. `EvidenceSource` includes `Voice`
+  and the database accepts it, but no adapter produces it. The UI labels voice unavailable.
+- **Photo evidence and OCR.** `Photo` is likewise typed and unimplemented.
+- **A shared QVAC runtime owner.** One adapter manages the worker and model today. A shared
+  owner is recommended in QVAC_ARCHITECTURE.md but should not be built before a second
+  capability exists.
+- **Freshness and aging policy.** Elapsed days are computed; classification stays unknown
+  because no business thresholds were supplied.
+- **Natural-language analytics, authentication, multi-user sync, automatic entity merging,
+  model packaging, production installers.** All outside this vertical slice.
+- **Database encryption at rest.** See [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) and
+  decision 14 in [DECISIONS.md](DECISIONS.md).

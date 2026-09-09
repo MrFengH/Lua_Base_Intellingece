@@ -102,4 +102,16 @@ The QVAC smoke must print four lifecycle checks—runtime initialized, model loa
 - Natural-language analytics, authentication, multi-user synchronization, automatic entity merging, model packaging, and production installers are outside this vertical slice.
 - The QVAC smoke depends on the local machine's network for the first model acquisition and on its QVAC/Vulkan compatibility.
 
-See [Architecture](docs/ARCHITECTURE.md), [technical decisions](docs/DECISIONS.md), and [QVAC compliance](docs/QVAC_COMPLIANCE.md).
+## Documentation
+
+| Document                                           | Covers                                                     |
+| -------------------------------------------------- | ---------------------------------------------------------- |
+| [Architecture](docs/ARCHITECTURE.md)               | Components, layers, data flow, module responsibilities     |
+| [QVAC architecture](docs/QVAC_ARCHITECTURE.md)     | Where QVAC lives, model lifecycle, failure handling        |
+| [QVAC compliance](docs/QVAC_COMPLIANCE.md)         | SDK, plugin, model, structured output, network posture     |
+| [Data schema](docs/DATA_SCHEMA.md)                 | What an observation is, and how uncertainty is preserved   |
+| [Model strategy](docs/MODEL_STRATEGY.md)           | Which model for which capability, and why not a bigger one |
+| [Privacy and offline](docs/PRIVACY_OFFLINE.md)     | Threat model, what may touch the network                   |
+| [Performance budgets](docs/PERFORMANCE_BUDGETS.md) | What to measure and how                                    |
+| [Testing](docs/TESTING.md)                         | Strategy for testing local AI, including extraction cases  |
+| [Technical decisions](docs/DECISIONS.md)           | ADR log                                                    |

@@ -10,7 +10,10 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
-    build: { outDir: resolve('dist/preload') },
+    build: {
+      outDir: resolve('dist/preload'),
+      rollupOptions: { output: { format: 'cjs' } },
+    },
     resolve: { alias: { '@': resolve('src') } },
   },
   renderer: {

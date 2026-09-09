@@ -1,5 +1,13 @@
 # Technical decisions
 
+Lightweight ADR log. Decisions 1 to 9 are **Accepted** and implemented; they were recorded in a
+short Decision / Why / Trade-off form and are left as written. Decisions from 10 onward use the
+fuller Context / Decision / Reason / Consequences / Status form and may be **Proposed**, meaning
+the question is open and nothing has been built.
+
+Only architecturally significant decisions belong here. Do not change an accepted decision
+without adding a new entry that supersedes it.
+
 ## 1. A small offline-first Electron slice
 
 **Decision:** Use Electron, React, TypeScript, and local SQLite, with one end-to-end workflow rather than a broad platform skeleton.
@@ -71,3 +79,63 @@
 **Why:** The referenced workbook and DOCX were unavailable. Synthetic data provides a stable demo and automated-test baseline without implying source provenance that does not exist.
 
 **Trade-off:** Spreadsheet ingestion and mapping to official challenge records remain unimplemented until the source file is provided.
+
+## 10. The model reports observations; rules derive everything else
+
+**Context:** A language model asked for a confidence score will supply one, and it will look reasonable. The same applies to installation years, duplicate judgements, and provenance.
+
+**Decision:** The extraction schema the model must satisfy contains only what a person could have said: modality, quantity, manufacturer, model, approximate age, notes, and how certain the speaker sounded. Confidence, installation estimates, field provenance, observation status, and duplicate scores are computed by inspectable domain rules after extraction.
+
+**Reason:** It puts the boundary between "reported" and "derived" in the type system rather than in a prompt instruction. Derived values become versionable and testable, and a reviewer can disagree with a score by reading its reason codes.
+
+**Consequences:** The model cannot express nuance the domain rules do not model, so new derived semantics need code rather than prompt changes. Every derived value carries a strategy version so stored records stay interpretable after the rules change.
+
+**Status:** Accepted, implemented.
+
+## 11. The smallest model that meets the bar
+
+**Context:** QVAC's registry offers completion models from 0.6B to well beyond what a field laptop can run, and the SDK ships twelve worker plugins.
+
+**Decision:** Use `QWEN3_600M_INST_Q4` and enable exactly one plugin. Escalate to a larger model only after measuring the smaller one against the extraction corpus and recording which cases it failed.
+
+**Reason:** Model size costs download time, disk, RAM, latency, and battery on every device in the field. The extraction task is heavily constrained by a JSON schema and a six-value modality vocabulary, so structural correctness is enforced outside the model.
+
+**Consequences:** Extraction quality is bounded by a small model, which makes the adversarial test corpus in TESTING.md the mechanism that detects when the bound has been reached. The escalation path to `QWEN3_1_7B_INST_Q4` is documented in MODEL_STRATEGY.md and costs about 2.8× the download.
+
+**Status:** Accepted, implemented.
+
+## 12. Voice capture via QVAC Whisper
+
+**Context:** Someone walking a hospital corridor would rather speak than type. `SpeechToTextPort` and the `Voice` evidence source already exist as typed seams, unimplemented.
+
+**Decision:** When voice ships, use the QVAC whispercpp transcription plugin with a tiny Whisper model, feeding its transcript into the existing extraction pipeline unchanged.
+
+**Reason:** It reuses the whole downstream pipeline, adds about 42 MiB rather than a second large model, and keeps audio on the device. Transcription and extraction stay separate concerns, so a transcription error is visible as text before it becomes structured data.
+
+**Consequences:** A second model lifecycle to manage, a second plugin in the bundle, and an open question about whether the two models may be resident simultaneously, which needs a measured RAM figure first. The quality bar must be defined against hospital vocabulary, not general word error rate.
+
+**Status:** Proposed. Nothing implemented.
+
+## 13. Deduplication stays deterministic and never auto-merges
+
+**Context:** Two colleagues visiting the same hospital will both report a Siemens MR. Deciding whether that is one scanner or two is the core data-quality problem, and embedding similarity is the obvious tempting answer.
+
+**Decision:** Keep the transparent scored candidate model. Same customer and compatible known modality are hard gates; manufacturer, model, and age adjust a versioned score with coded reasons. Candidates are surfaced for human resolution and are never merged automatically.
+
+**Reason:** An automatic merge on a low-certainty score destroys the audit trail the append-only design exists to protect, and it is unrecoverable. A wrong candidate is a review item; a wrong merge is lost evidence.
+
+**Consequences:** Duplicates accumulate until someone reviews them, and the heuristics need calibration against real reviewed data that does not exist yet. Serial number and location within the facility would substantially improve matching and are not captured today.
+
+**Status:** Accepted for the current scoring; the improvements are Proposed. See DATA_SCHEMA.md.
+
+## 14. Local database is not encrypted at rest
+
+**Context:** The SQLite file holds facility names, equipment details, reporter identity, and verbatim observation text, on laptops that travel to hospitals.
+
+**Decision:** The prototype relies on operating-system account isolation and full-disk encryption. No application-level database encryption.
+
+**Reason:** `node:sqlite` provides no encryption, and adding a native encrypted driver would reintroduce the native build step that decision 2 avoided. For a prototype with synthetic data the trade is acceptable.
+
+**Consequences:** Device theft is an unmitigated gap, recorded as such in PRIVACY_OFFLINE.md. Any real deployment must revisit this before field use, which likely means changing the persistence driver.
+
+**Status:** Accepted for the prototype. Revisiting it is Proposed and blocking for production.
