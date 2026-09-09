@@ -80,6 +80,63 @@ without adding a new entry that supersedes it.
 
 **Trade-off:** Spreadsheet ingestion and mapping to official challenge records remain unimplemented until the source file is provided.
 
+### Amendment, 2026-09-09 — the workbook arrived and its 20 records are now the seed
+
+**What changed:** `Dummy_Installed_Base_Hackathon.xlsx` was supplied. Its README sheet states the
+20 rows of `Dummy Installed Base` are "to use as expected output / database seed", so they replace
+the three invented facilities outright. `DEVELOPMENT_SEED_KEY` moves from
+`synthetic-development-v1` to `official-dummy-v1` so the idempotent seed re-applies over an
+existing database. `Hospital DemoCare Pacific` keeps the id `seed-customer-democare`.
+
+**What was ingested:** 20 equipment records as 13 visits over 13 facilities, in 13 cities and 10
+countries, using the six fictional brands of the `Dummy Reference Lists` sheet. The rows are
+transcribed into a static typed table,
+`src/infrastructure/seed/official-installed-base-records.ts`. **There is no runtime XLSX parser
+and no new dependency**; the data is static and a parser would add a parsing surface for nothing.
+
+**Why replace rather than complement:** keeping the invented facilities alongside would populate
+the aggregate view with sites a reviewer cannot find in the official file, which is worse than
+either option alone. The guardrail is untouched: the workbook states that all of its customers,
+brands, models and observations are synthetic and exist only for hackathon testing.
+
+**Three mapping rules, and what each refuses to invent:**
+
+1. **Age.** An official integer age `n` becomes `{ type: 'estimate', minYears: n, maxYears: n }`,
+   never `exact`. That is decision 15 below, taken by a person. The derived installation year
+   still equals the official `Estimated Installation Year` column on all 20 rows.
+2. **Status and confidence level** are transcribed from the official `Status` and `Confidence`
+   columns rather than re-derived, because the slice's purpose is to reproduce the workbook. No
+   status or confidence _semantics_ changed: the derivation rules that apply to newly captured
+   observations are untouched.
+3. **Confidence score stays `null`.** The workbook supplies a level and no score. Attaching a
+   number to a level the source never quantified would be the fabrication the schema exists to
+   prevent, so the level carries coded reasons and no score.
+
+**Trade-off:** the transcription is manual, so the workbook and the fixture can drift if the
+official file is ever revised. `tests/infrastructure/official-seed.test.ts` pins the counts, the
+brand set, the modality set, the age mapping and the derived installation years against the
+transcribed table, which makes a drift visible but cannot detect a change made only in the
+spreadsheet.
+
+**Retiring the seed it replaces.** `seed_imports` recorded _that_ a seed key had been applied but
+never _which rows it wrote_, so there was no safe way to remove the previous seed's data. Because
+the official seed deliberately reuses `seed-customer-democare`, `seed-session-democare` and
+`seed-visit-democare`, a database built by the previous seed failed to start with
+`UNIQUE constraint failed: observation_sessions.id`. Migration `002_session_seed_ownership` adds a
+nullable `observation_sessions.seed_key`, and `applySeed` now retires the seeds listed in
+`SUPERSEDED_SEED_KEYS` before writing. Ownership, not a heuristic, decides what is removed: a
+user-captured session always has `seed_key IS NULL` and is therefore never in range. The migration
+backfills existing rows from the `fixture` key in `evidence_items.metadata_json`, which is exact,
+because until then the seed was the only writer of evidence metadata and the capture workflow wrote
+none. Retirement refuses to run rather than break a link if a surviving session supersedes a seeded
+one.
+
+**Two things the workbook contradicts itself about**, transcribed as the structured columns state
+and flagged rather than silently resolved: observations 12 and 20 carry a model in the
+`Dummy Model` column while their own `Follow-up Answer` and `Notes` say the model was not visible.
+The structured column is the one the README designates as the seed, so it wins; the follow-up text
+is retained verbatim as evidence, so both readings stay inspectable.
+
 ## 10. The model reports observations; rules derive everything else
 
 **Context:** A language model asked for a confidence score will supply one, and it will look reasonable. The same applies to installation years, duplicate judgements, and provenance.
@@ -139,3 +196,42 @@ without adding a new entry that supersedes it.
 **Consequences:** Device theft is an unmitigated gap, recorded as such in PRIVACY_OFFLINE.md. Any real deployment must revisit this before field use, which likely means changing the persistence driver.
 
 **Status:** Accepted for the prototype. Revisiting it is Proposed and blocking for production.
+
+## 15. Official integer ages map to `estimate`, not `exact` (`X-06`)
+
+**Context:** The 20 official records in the challenge workbook carry a bare integer age. The age
+union in `src/domain/model/age.ts` offers `exact`, `estimate`, `range`, `qualitative`, `unknown`.
+Fifteen of the twenty official follow-up answers that produced those integers say "around",
+"about", "maybe", "roughly", "I think" or "my best estimate". `P2-D1` in `docs/ROADMAP.md` names
+this a human decision gate, not one an implementing agent may take, because it sets the honesty
+baseline for every seeded record and for everything Customer 360 and the Dashboard display from
+it.
+
+**Decision (human, 2026-09-09):** An official integer age `n` maps to
+`{ type: 'estimate', minYears: n, maxYears: n }`, **never** to `{ type: 'exact', years: n }`.
+
+**Reason:** The source integers are hedged reported answers, not measurements. Recording a hedged
+statement as exact would bake a violation of `AGENTS.md` rule 10 — never turn human uncertainty
+into machine certainty — into the demo data itself.
+
+**Consequences:**
+
+1. `deriveInstallationEstimate` returns a single `year` when `minYears === maxYears`, so derived
+   installation years still match the official `Estimated Installation Year` column exactly (row 1:
+   2026 − 7 = 2019, official 2019). No divergence introduced there.
+2. `capture-workflow-service.ts` derives `status` to `Estimated` whenever the age is an estimate or
+   a range. This divergence is accepted for now; it is independent evidence that status should come
+   from how the information was obtained rather than from age precision, which `B-01` addresses
+   separately. It is not a reason to revisit this decision.
+
+   **Narrowed on implementation, 2026-09-09.** The consequence is smaller than anticipated. It was
+   written expecting every seeded row to become `Estimated`. The seed is a transcription, not a
+   capture, so it carries the official `Status` column directly and keeps the workbook's 13
+   `Reported` and 7 `Estimated`. The derivation rule is untouched and the divergence it describes
+   now applies only to observations captured through the workflow, which is exactly the scope
+   `B-01` covers.
+
+**Status:** Accepted (human decision, resolves `X-06` / `P2-D1`). **Implemented** in `P2-S2`:
+`src/infrastructure/seed/development-seed.ts` maps every official integer age through
+`officialAge`, and `tests/infrastructure/official-seed.test.ts` fails if any seeded age is
+recorded as `exact`. Folded into the amendment of decision 9 above.

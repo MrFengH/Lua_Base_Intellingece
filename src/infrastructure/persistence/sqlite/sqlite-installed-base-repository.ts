@@ -288,19 +288,80 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
     );
   }
 
-  applySeed(seedKey: string, aggregates: readonly SavedObservationAggregate[]): void {
-    if (this.hasSeed(seedKey)) return;
+  applySeed(
+    seedKey: string,
+    aggregates: readonly SavedObservationAggregate[],
+    supersededSeedKeys: readonly string[] = [],
+  ): void {
+    const stale = supersededSeedKeys.filter((key) => key !== seedKey && this.hasSeed(key));
+    const alreadyApplied = this.hasSeed(seedKey);
+    if (alreadyApplied && stale.length === 0) return;
     this.database.transaction(() => {
-      aggregates.forEach((aggregate) => this.insertAggregate(aggregate, []));
+      stale.forEach((key) => this.retireSeed(key));
+      if (alreadyApplied) return;
+      aggregates.forEach((aggregate) => this.insertAggregate(aggregate, [], seedKey));
       this.database.connection
         .prepare('INSERT INTO seed_imports (seed_key, applied_at) VALUES (?, ?)')
         .run(seedKey, new Date().toISOString());
     });
   }
 
+  /**
+   * Removes everything a superseded seed wrote, and nothing else.
+   *
+   * Ownership is the `observation_sessions.seed_key` column, so a user-captured session — which
+   * always has `seed_key IS NULL` — can never be selected here. A customer is removed only if
+   * retiring the seed left it with no sessions at all, which keeps any facility a user has since
+   * reported against.
+   */
+  private retireSeed(seedKey: string): void {
+    const db = this.database.connection;
+    const owned = 'SELECT id FROM observation_sessions WHERE seed_key = ?';
+    const customerIds = db
+      .prepare('SELECT DISTINCT customer_id FROM observation_sessions WHERE seed_key = ?')
+      .all(seedKey) as Row[];
+    const survivingSupersede = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM observation_sessions
+         WHERE supersedes_session_id IN (${owned}) AND COALESCE(seed_key, '') <> ?`,
+      )
+      .get(seedKey, seedKey) as Row;
+    if (numericValue(survivingSupersede, 'count') > 0) {
+      throw new Error(
+        `Refusing to retire seed "${seedKey}": a session outside it supersedes one of its sessions.`,
+      );
+    }
+    // A duplicate candidate on either side of a retired observation would be left dangling. The
+    // observation that raised it survives; only the now-meaningless candidate link is removed.
+    db.prepare(
+      `DELETE FROM duplicate_candidates WHERE source_observation_id IN (
+         SELECT id FROM equipment_observations WHERE session_id IN (${owned}))
+       OR candidate_observation_id IN (
+         SELECT id FROM equipment_observations WHERE session_id IN (${owned}))`,
+    ).run(seedKey, seedKey);
+    db.prepare(
+      `DELETE FROM equipment_observation_evidence WHERE equipment_observation_id IN (
+         SELECT id FROM equipment_observations WHERE session_id IN (${owned}))`,
+    ).run(seedKey);
+    db.prepare(`DELETE FROM equipment_observations WHERE session_id IN (${owned})`).run(seedKey);
+    db.prepare(`DELETE FROM evidence_items WHERE session_id IN (${owned})`).run(seedKey);
+    db.prepare('DELETE FROM observation_sessions WHERE seed_key = ?').run(seedKey);
+    const deleteCustomer = db.prepare(
+      `DELETE FROM customers WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM observation_sessions WHERE customer_id = ?)`,
+    );
+    customerIds.forEach((row) => {
+      const id = stringValue(row, 'customer_id');
+      deleteCustomer.run(id, id);
+    });
+    db.prepare('DELETE FROM seed_imports WHERE seed_key = ?').run(seedKey);
+  }
+
   private insertAggregate(
     aggregate: SavedObservationAggregate,
     duplicateCandidates: readonly DuplicateCandidate[],
+    /** The seed that produced this aggregate, or `null` for a user-captured observation. */
+    seedKey: string | null = null,
   ): void {
     const db = this.database.connection;
     db.prepare(
@@ -319,8 +380,8 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
     db.prepare(
       `INSERT INTO observation_sessions
        (id, customer_id, observer_id, observer_display_name, visit_id, observed_at, created_at,
-        last_verified_at, raw_input, reported_facility_json, supersedes_session_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        last_verified_at, raw_input, reported_facility_json, supersedes_session_id, seed_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       aggregate.session.id,
       aggregate.session.customerId,
@@ -333,6 +394,7 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       aggregate.session.rawInput,
       JSON.stringify(aggregate.session.reportedFacility),
       aggregate.session.supersedesSessionId ?? null,
+      seedKey,
     );
     const insertEvidence = db.prepare(
       `INSERT INTO evidence_items

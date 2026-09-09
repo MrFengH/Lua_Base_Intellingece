@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { INITIAL_MIGRATION_ID, INITIAL_MIGRATION_SQL } from './migrations/001-initial';
+import { MIGRATIONS } from './migrations';
 
 export class LocalSqliteDatabase {
   readonly connection: DatabaseSync;
@@ -33,15 +33,16 @@ export class LocalSqliteDatabase {
         applied_at TEXT NOT NULL
       ) STRICT;
     `);
-    const applied = this.connection
-      .prepare('SELECT id FROM schema_migrations WHERE id = ?')
-      .get(INITIAL_MIGRATION_ID);
-    if (applied) return;
-    this.transaction(() => {
-      this.connection.exec(INITIAL_MIGRATION_SQL);
-      this.connection
-        .prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)')
-        .run(INITIAL_MIGRATION_ID, new Date().toISOString());
+    const isApplied = this.connection.prepare('SELECT id FROM schema_migrations WHERE id = ?');
+    const record = this.connection.prepare(
+      'INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)',
+    );
+    MIGRATIONS.forEach((migration) => {
+      if (isApplied.get(migration.id)) return;
+      this.transaction(() => {
+        this.connection.exec(migration.sql);
+        record.run(migration.id, new Date().toISOString());
+      });
     });
   }
 }

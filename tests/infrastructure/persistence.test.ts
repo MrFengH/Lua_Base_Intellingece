@@ -50,17 +50,21 @@ describe('SQLite persistence', () => {
     }
   });
 
-  it('applies the synthetic seed idempotently and preserves projection trace ids', () => {
+  it('applies the official seed idempotently and preserves projection trace ids', () => {
     const database = new LocalSqliteDatabase(':memory:');
     try {
       const repository = new SqliteInstalledBaseRepository(database);
       applyDevelopmentSeed(repository);
       applyDevelopmentSeed(repository);
-      expect(repository.list()).toHaveLength(3);
+      expect(repository.list()).toHaveLength(13);
       const sessions = database.connection
         .prepare('SELECT COUNT(*) AS count FROM observation_sessions')
         .get() as { count: number };
-      expect(sessions.count).toBe(3);
+      expect(sessions.count).toBe(13);
+      const equipment = database.connection
+        .prepare('SELECT COUNT(*) AS count FROM equipment_observations')
+        .get() as { count: number };
+      expect(equipment.count).toBe(20);
       const view = repository.getCustomer360('seed-customer-democare', '2026-09-08T00:00:00Z');
       expect(view?.installedBase).toHaveLength(2);
       expect(

@@ -110,6 +110,10 @@ One visit by one observer. Table `observation_sessions`. **Append-only once save
 | `evidence`            | yes                | the `EvidenceItem` list                             |
 | `supersedesSessionId` | optional, nullable | a later visit correcting an earlier one             |
 
+The table also carries `seed_key`, which is not part of the domain type. It names the seed that
+wrote the row and is `NULL` for everything a user captured, so a superseded seed can be retired
+without a heuristic guessing which rows were fixtures. Nothing but the seed machinery reads it.
+
 `reportedFacility` is kept separate from the resolved `Customer` on purpose. What the person
 said and what the system matched it to are two different facts.
 

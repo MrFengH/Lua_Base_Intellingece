@@ -1,272 +1,245 @@
 import type {
   ApproximateAge,
+  ConfidenceAssessment,
   Customer,
   EquipmentObservation,
+  EvidenceItem,
+  FieldProvenance,
   SavedObservationAggregate,
 } from '@/domain';
 import { deriveInstallationEstimate, normalizeName } from '@/domain';
 import type { SeedRepository } from '@/application/ports';
+import type { OfficialInstalledBaseRecord } from './official-installed-base-records';
+import { OFFICIAL_INSTALLED_BASE_RECORDS } from './official-installed-base-records';
 
-export const DEVELOPMENT_SEED_KEY = 'synthetic-development-v1';
+/**
+ * Bumped from `synthetic-development-v1` when the three invented facilities were replaced by the
+ * official workbook rows, so the idempotent seed re-applies over a database that already holds
+ * the old fixtures.
+ */
+export const DEVELOPMENT_SEED_KEY = 'official-dummy-v1';
 
-const confidence = (evidenceId: string) => ({
-  level: 'High' as const,
-  score: 0.83,
-  reasons: [{ code: 'EXPLICIT_FACTS' as const, detail: 'Synthetic explicit seed facts.' }],
-  evidenceIds: [evidenceId],
-  strategyVersion: 'confidence-v1' as const,
+/**
+ * Seeds this one replaces. Their rows are removed before the official records are written, so a
+ * database built by an earlier seed converges on the official dataset instead of accumulating
+ * both. Retirement is scoped by `observation_sessions.seed_key`, so nothing a user captured is
+ * ever in range.
+ *
+ * `synthetic-development-v1` is the pre-`P2-S2` seed of three invented facilities. It shares the
+ * ids `seed-customer-democare`, `seed-session-democare` and `seed-visit-democare` with the
+ * official seed, which is why leaving its rows in place made the application fail to start.
+ */
+export const SUPERSEDED_SEED_KEYS: readonly string[] = ['synthetic-development-v1'];
+
+/** The workbook records a calendar date; the domain stores an instant. */
+const observedAtOf = (record: OfficialInstalledBaseRecord): string =>
+  `${record.visitDate}T00:00:00.000Z`;
+
+const slug = (value: string): string => normalizeName(value).replace(/ /g, '-');
+
+/**
+ * `Hospital DemoCare Pacific` keeps the id the pre-official seed gave it, because the demo path
+ * and `tests/infrastructure/persistence.test.ts` both address that facility by id.
+ */
+const customerIdOf = (name: string): string =>
+  name === 'Hospital DemoCare Pacific' ? 'seed-customer-democare' : `seed-customer-${slug(name)}`;
+
+const sessionIdOf = (name: string): string =>
+  name === 'Hospital DemoCare Pacific' ? 'seed-session-democare' : `seed-session-${slug(name)}`;
+
+const visitIdOf = (name: string): string =>
+  name === 'Hospital DemoCare Pacific' ? 'seed-visit-democare' : `seed-visit-${slug(name)}`;
+
+const equipmentIdOf = (observationId: number): string =>
+  `seed-equipment-${String(observationId).padStart(2, '0')}`;
+
+const followUpEvidenceIdOf = (sessionId: string, observationId: number): string =>
+  `${sessionId}-followup-${String(observationId).padStart(2, '0')}`;
+
+/**
+ * Decision 15 (`X-06`), taken by a person: an official integer age `n` is a hedged reported
+ * answer, not a measurement, so it becomes `estimate(n, n)` and never `exact`.
+ *
+ * `deriveInstallationEstimate` collapses `minYears === maxYears` back to a single year, so the
+ * derived installation year still equals the official `Estimated Installation Year` column.
+ */
+const officialAge = (years: number): ApproximateAge => ({
+  type: 'estimate',
+  minYears: years,
+  maxYears: years,
 });
 
-const customer = (
-  id: string,
-  name: string,
-  city: string,
-  country: string,
-  createdAt: string,
-): Customer => ({
-  id,
-  name,
-  normalizedName: normalizeName(name),
-  city,
-  country,
-  createdAt,
-  updatedAt: createdAt,
+/**
+ * The workbook supplies a confidence *level*, not a score. Inventing a number to sit beside the
+ * level would be exactly the fabrication the schema exists to prevent, so the score stays `null`
+ * and the reasons say where the level came from.
+ */
+const officialConfidence = (
+  record: OfficialInstalledBaseRecord,
+  evidenceIds: readonly string[],
+): ConfidenceAssessment => ({
+  level: record.confidence,
+  score: null,
+  reasons: [
+    {
+      code: 'EXPLICIT_FACTS',
+      detail: 'Modality, quantity, brand and model stated in the official record.',
+    },
+    {
+      code: 'UNCERTAINTY_LANGUAGE',
+      detail: 'Approximate age kept as an estimate; the official follow-up answer is hedged.',
+    },
+    {
+      code: 'DERIVED_FACTS',
+      detail: 'Installation year derived from the approximate age and the visit date.',
+    },
+  ],
+  evidenceIds,
+  strategyVersion: 'confidence-v1',
 });
 
-const equipment = (
-  id: string,
+const reported = (
+  certainty: FieldProvenance['certainty'],
+  evidenceIds: readonly string[],
+): FieldProvenance => ({
+  knowledgeState: 'Known',
+  origin: 'Reported',
+  certainty,
+  evidenceIds,
+});
+
+const equipmentOf = (
+  record: OfficialInstalledBaseRecord,
   sessionId: string,
-  order: number,
-  modality: EquipmentObservation['modality'],
-  quantity: number,
-  manufacturer: string,
-  model: string,
-  age: ApproximateAge,
-  observedAt: string,
-  evidenceId: string,
-): EquipmentObservation => ({
-  id,
-  sessionId,
-  groupOrder: order,
-  modality,
-  rawModality: modality,
-  quantity,
-  manufacturer,
-  model,
-  approximateAge: age,
-  installationEstimate: deriveInstallationEstimate(age, observedAt),
-  confidence: confidence(evidenceId),
-  status: age.type === 'estimate' || age.type === 'range' ? 'Estimated' : 'Reported',
-  notes: 'Synthetic development data; not sourced from the unavailable challenge workbook.',
-  evidenceIds: [evidenceId],
-  fieldProvenance: {
-    modality: {
-      knowledgeState: 'Known',
-      origin: 'Reported',
-      certainty: 'Explicit',
-      evidenceIds: [evidenceId],
-    },
-    quantity: {
-      knowledgeState: 'Known',
-      origin: 'Reported',
-      certainty: 'Explicit',
-      evidenceIds: [evidenceId],
-    },
-    manufacturer: {
-      knowledgeState: 'Known',
-      origin: 'Reported',
-      certainty: 'Explicit',
-      evidenceIds: [evidenceId],
-    },
-    model: {
-      knowledgeState: 'Known',
-      origin: 'Reported',
-      certainty: 'Explicit',
-      evidenceIds: [evidenceId],
-    },
-    approximateAge: {
-      knowledgeState: 'Known',
-      origin: 'Reported',
-      certainty: age.type === 'exact' ? 'Explicit' : 'Uncertain',
-      evidenceIds: [evidenceId],
-    },
-  },
-});
-
-const aggregate = (
-  facility: Customer,
-  sessionId: string,
-  observerId: string,
-  observerName: string,
-  visitId: string,
-  observedAt: string,
-  rawInput: string,
-  items: readonly EquipmentObservation[],
-): SavedObservationAggregate => {
-  const evidenceId = `${sessionId}-evidence`;
+  groupOrder: number,
+  evidenceIds: readonly string[],
+): EquipmentObservation => {
+  const approximateAge = officialAge(record.approximateAgeYears);
   return {
-    customer: facility,
-    session: {
-      id: sessionId,
-      customerId: facility.id,
-      observer: { id: observerId, displayName: observerName },
-      visitId,
-      observedAt,
-      createdAt: observedAt,
-      lastVerifiedAt: null,
-      rawInput,
-      reportedFacility: {
-        name: facility.name,
-        normalizedName: facility.normalizedName,
-        city: facility.city,
-        country: facility.country,
-      },
-      evidence: [
-        {
-          id: evidenceId,
-          sessionId,
-          source: 'Text',
-          capturedAt: observedAt,
-          rawText: rawInput,
-          metadata: { fixture: DEVELOPMENT_SEED_KEY },
-        },
-      ],
+    id: equipmentIdOf(record.observationId),
+    sessionId,
+    groupOrder,
+    modality: record.modality,
+    rawModality: record.modality,
+    quantity: record.quantity,
+    manufacturer: record.brand,
+    model: record.model,
+    approximateAge,
+    installationEstimate: deriveInstallationEstimate(approximateAge, observedAtOf(record)),
+    confidence: officialConfidence(record, evidenceIds),
+    status: record.status,
+    notes: record.notes,
+    evidenceIds,
+    fieldProvenance: {
+      modality: reported('Explicit', evidenceIds),
+      quantity: reported('Explicit', evidenceIds),
+      manufacturer: reported('Explicit', evidenceIds),
+      model: reported('Explicit', evidenceIds),
+      approximateAge: reported('Uncertain', evidenceIds),
     },
-    equipment: items,
   };
 };
 
-export const createDevelopmentSeed = (): readonly SavedObservationAggregate[] => {
-  const demoObserved = '2026-06-12T14:00:00.000Z';
-  const demoSession = 'seed-session-democare';
-  const demoEvidence = `${demoSession}-evidence`;
-  const demo = customer(
-    'seed-customer-democare',
-    'Hospital DemoCare Pacific',
-    'Panama City',
-    'Panama',
-    demoObserved,
-  );
-
-  const auroraObserved = '2026-05-03T12:00:00.000Z';
-  const auroraSession = 'seed-session-aurora';
-  const auroraEvidence = `${auroraSession}-evidence`;
-  const aurora = customer(
-    'seed-customer-aurora',
-    'Hospital São Aurora',
-    'São Paulo',
-    'Brazil',
-    auroraObserved,
-  );
-
-  const valleObserved = '2026-04-20T16:30:00.000Z';
-  const valleSession = 'seed-session-valle';
-  const valleEvidence = `${valleSession}-evidence`;
-  const valle = customer(
-    'seed-customer-valle',
-    'Hospital Valle Norte',
-    'Medellín',
-    'Colombia',
-    valleObserved,
-  );
-
-  return [
-    aggregate(
-      demo,
-      demoSession,
-      'seed-observer-1',
-      'Synthetic Observer A',
-      'seed-visit-democare',
-      demoObserved,
-      'Hospital DemoCare Pacific has two NovaMed MR systems and one Aurelia CT.',
-      [
-        equipment(
-          'seed-equipment-democare-mr',
-          demoSession,
-          0,
-          'MR',
-          2,
-          'NovaMed',
-          'X',
-          { type: 'estimate', minYears: 8, maxYears: 8 },
-          demoObserved,
-          demoEvidence,
-        ),
-        equipment(
-          'seed-equipment-democare-ct',
-          demoSession,
-          1,
-          'CT',
-          1,
-          'Aurelia',
-          'CT-4',
-          { type: 'estimate', minYears: 5, maxYears: 6 },
-          demoObserved,
-          demoEvidence,
-        ),
-      ],
-    ),
-    aggregate(
-      aurora,
-      auroraSession,
-      'seed-observer-2',
-      'Synthetic Observer B',
-      'seed-visit-aurora',
-      auroraObserved,
-      'Hospital São Aurora reports one NovaMed MR model Axis, around nine years old.',
-      [
-        equipment(
-          'seed-equipment-aurora-mr',
-          auroraSession,
-          0,
-          'MR',
-          1,
-          'NovaMed',
-          'Axis',
-          { type: 'estimate', minYears: 9, maxYears: 9 },
-          auroraObserved,
-          auroraEvidence,
-        ),
-      ],
-    ),
-    aggregate(
-      valle,
-      valleSession,
-      'seed-observer-3',
-      'Synthetic Observer C',
-      'seed-visit-valle',
-      valleObserved,
-      'Hospital Valle Norte has three Aurelia ultrasound units and two NovaMed X-Ray units.',
-      [
-        equipment(
-          'seed-equipment-valle-ultrasound',
-          valleSession,
-          0,
-          'Ultrasound',
-          3,
-          'Aurelia',
-          'Echo',
-          { type: 'exact', years: 4 },
-          valleObserved,
-          valleEvidence,
-        ),
-        equipment(
-          'seed-equipment-valle-xray',
-          valleSession,
-          1,
-          'X-Ray',
-          2,
-          'NovaMed',
-          'Ray-2',
-          { type: 'qualitative', label: 'recent' },
-          valleObserved,
-          valleEvidence,
-        ),
-      ],
-    ),
-  ];
+/**
+ * Rows sharing a customer, an observer and a visit date are one visit, so they become one session
+ * with several equipment groups. Rows 3 and 4 stay two MR groups at different ages and models
+ * because that is what the official data says; averaging them would fabricate.
+ */
+const groupIntoVisits = (
+  records: readonly OfficialInstalledBaseRecord[],
+): readonly (readonly OfficialInstalledBaseRecord[])[] => {
+  const visits = new Map<string, OfficialInstalledBaseRecord[]>();
+  records.forEach((record) => {
+    const key = `${record.customer}|${record.observer}|${record.visitDate}`;
+    visits.set(key, [...(visits.get(key) ?? []), record]);
+  });
+  return [...visits.values()];
 };
 
+const aggregateOf = (
+  records: readonly OfficialInstalledBaseRecord[],
+): SavedObservationAggregate => {
+  const first = records[0];
+  if (!first) throw new Error('An official visit group is unexpectedly empty.');
+  const observedAt = observedAtOf(first);
+  const sessionId = sessionIdOf(first.customer);
+
+  // A visit contributes one voice evidence item per distinct utterance, not one per row.
+  const utterances = [...new Set(records.map((record) => record.voiceInput))];
+  const voiceEvidenceIdOf = (record: OfficialInstalledBaseRecord): string =>
+    `${sessionId}-voice-${utterances.indexOf(record.voiceInput) + 1}`;
+
+  const voiceEvidence: EvidenceItem[] = utterances.map((rawText, index) => ({
+    id: `${sessionId}-voice-${index + 1}`,
+    sessionId,
+    source: first.source,
+    capturedAt: observedAt,
+    rawText,
+    metadata: { fixture: DEVELOPMENT_SEED_KEY, workbookColumn: 'Voice Input Example' },
+  }));
+
+  // The follow-up answer is the text that actually supplied the brand and the age, so it is
+  // evidence in its own right. The agent's question has no domain field and is kept as metadata.
+  const followUpEvidence: EvidenceItem[] = records.map((record) => ({
+    id: followUpEvidenceIdOf(sessionId, record.observationId),
+    sessionId,
+    source: record.source,
+    capturedAt: observedAt,
+    rawText: record.followUpAnswer,
+    metadata: {
+      fixture: DEVELOPMENT_SEED_KEY,
+      workbookColumn: 'Follow-up Answer',
+      followUpQuestion: record.followUpQuestion,
+      officialObservationId: record.observationId,
+    },
+  }));
+
+  const customer: Customer = {
+    id: customerIdOf(first.customer),
+    name: first.customer,
+    normalizedName: normalizeName(first.customer),
+    city: first.city,
+    country: first.country,
+    createdAt: observedAt,
+    updatedAt: observedAt,
+  };
+
+  return {
+    customer,
+    session: {
+      id: sessionId,
+      customerId: customer.id,
+      observer: { id: `seed-observer-${slug(first.observer)}`, displayName: first.observer },
+      visitId: visitIdOf(first.customer),
+      observedAt,
+      createdAt: observedAt,
+      lastVerifiedAt: null,
+      rawInput: utterances.join(' '),
+      reportedFacility: {
+        name: customer.name,
+        normalizedName: customer.normalizedName,
+        city: customer.city,
+        country: customer.country,
+      },
+      evidence: [...voiceEvidence, ...followUpEvidence],
+    },
+    equipment: records.map((record, index) =>
+      equipmentOf(record, sessionId, index, [
+        voiceEvidenceIdOf(record),
+        followUpEvidenceIdOf(sessionId, record.observationId),
+      ]),
+    ),
+  };
+};
+
+/**
+ * The 20 official workbook records as 13 visits over 13 facilities. Every record is fictional by
+ * construction: the workbook states that all of its customers, brands, models and observations
+ * are synthetic and exist only for hackathon testing.
+ */
+export const createDevelopmentSeed = (): readonly SavedObservationAggregate[] =>
+  groupIntoVisits(OFFICIAL_INSTALLED_BASE_RECORDS).map(aggregateOf);
+
 export const applyDevelopmentSeed = (repository: SeedRepository): void => {
-  repository.applySeed(DEVELOPMENT_SEED_KEY, createDevelopmentSeed());
+  repository.applySeed(DEVELOPMENT_SEED_KEY, createDevelopmentSeed(), SUPERSEDED_SEED_KEYS);
 };

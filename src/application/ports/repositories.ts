@@ -39,7 +39,16 @@ export interface InstalledBaseQueryRepository {
 
 export interface SeedRepository {
   hasSeed(seedKey: string): boolean;
-  applySeed(seedKey: string, aggregates: readonly SavedObservationAggregate[]): void;
+  /**
+   * Applies a seed once, and retires any superseded seed named in `supersededSeedKeys` first.
+   * Retiring removes only rows that the superseded seed itself wrote; user-captured observations
+   * are never seed-owned and are never touched.
+   */
+  applySeed(
+    seedKey: string,
+    aggregates: readonly SavedObservationAggregate[],
+    supersededSeedKeys?: readonly string[],
+  ): void;
 }
 
 export type InstalledBaseRepository = CustomerRepository &
