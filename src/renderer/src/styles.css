@@ -492,9 +492,24 @@ dd {
   color: #236b7b;
 }
 .next-question {
-  font-size: 10px;
+  margin: 12px 2px;
+  padding: 10px 12px;
+  background: #f2f8fa;
+  border-radius: 9px;
+}
+.next-question p {
+  margin: 0;
+  font-size: 12px;
+  color: #2b4652;
+  font-weight: 600;
+}
+.next-question span {
+  display: block;
+  margin-top: 4px;
+  font-size: 9px;
   color: #7d8e99;
-  margin: 9px 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 .stacked-actions {
   margin-top: 12px;
@@ -681,10 +696,10 @@ dd {
 }
 .evidence-row {
   display: grid;
-  grid-template-columns: 155px 1fr 90px;
+  grid-template-columns: 155px 1fr 150px;
   gap: 15px;
-  align-items: center;
-  padding: 12px 15px;
+  align-items: start;
+  padding: 14px 15px;
   border-bottom: 1px solid #e7eef1;
 }
 .evidence-row:last-child {
@@ -702,17 +717,27 @@ dd {
   color: #80939f;
   margin-top: 3px;
 }
-.evidence-row p {
+.evidence-row p.evidence-text {
   margin: 0;
   font-size: 11px;
+  line-height: 1.5;
   color: #526b79;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
-.evidence-row code {
+.evidence-supports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.support-tag {
   font-size: 9px;
-  color: #80939f;
+  color: #17738a;
+  background: #e7f5f4;
+  border-radius: 10px;
+  padding: 3px 8px;
+  white-space: nowrap;
 }
 .duplicate-box,
 .policy-note {

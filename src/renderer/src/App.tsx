@@ -6,6 +6,8 @@ import type {
   CustomerListItem,
   DashboardView,
   InferenceRuntimeInfo,
+  InstalledBaseItem,
+  ObservationEvidenceView,
 } from '@/application/contracts';
 import { MODALITIES } from '@/domain/model';
 import type { ApproximateAge, DraftField, InstallationEstimate } from '@/domain';
@@ -35,6 +37,53 @@ const installationText = (installation: InstallationEstimate): string => {
   if (installation.type === 'unknown') return 'Unknown';
   if (installation.type === 'year') return `~${installation.year} (derived)`;
   return `${installation.minYear}–${installation.maxYear} (derived)`;
+};
+
+const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
+  `${count} ${count === 1 ? singular : pluralForm}`;
+
+interface SessionEvidenceGroup {
+  sessionId: string;
+  observedAt: string;
+  observerName: string;
+  source: string;
+  rawInput: string | null;
+  equipmentObservationIds: string[];
+}
+
+/** One evidence row per session rather than per equipment row, since a multi-equipment
+ * session otherwise repeats the same raw input once for every equipment group it produced. */
+const groupEvidenceBySession = (
+  evidence: readonly ObservationEvidenceView[],
+): SessionEvidenceGroup[] => {
+  const bySession = new Map<string, SessionEvidenceGroup>();
+  evidence.forEach((item) => {
+    const existing = bySession.get(item.sessionId);
+    if (existing) {
+      existing.equipmentObservationIds.push(item.equipmentObservationId);
+      return;
+    }
+    bySession.set(item.sessionId, {
+      sessionId: item.sessionId,
+      observedAt: item.observedAt,
+      observerName: item.observerName,
+      source: item.source,
+      rawInput: item.rawInput,
+      equipmentObservationIds: [item.equipmentObservationId],
+    });
+  });
+  return [...bySession.values()];
+};
+
+/** What each equipment observation id supports, so an evidence row can say which projection
+ * it backs instead of surfacing the bare internal id as its main content. */
+const equipmentLabelsById = (installedBase: readonly InstalledBaseItem[]): Map<string, string> => {
+  const labels = new Map<string, string>();
+  installedBase.forEach((item) => {
+    const label = `${item.modality}${item.manufacturer ? ` · ${item.manufacturer}` : ''}`;
+    item.contributingObservationIds.forEach((id) => labels.set(id, label));
+  });
+  return labels;
 };
 
 const RuntimeBadge = ({
@@ -393,9 +442,10 @@ const CapturePage = ({
               <strong>{capture.draft.state.replaceAll('_', ' ')}</strong>
             </div>
             {capture.pendingQuestion && (
-              <p className="next-question">
-                Next value: {capture.pendingQuestion.priority} · {capture.pendingQuestion.field}
-              </p>
+              <div className="next-question">
+                <p>{capture.pendingQuestion.text}</p>
+                <span>{capture.pendingQuestion.priority.toLowerCase()} question</span>
+              </div>
             )}
             <div className="stacked-actions">
               {capture.draft.state === 'NEEDS_FOLLOW_UP' && (
@@ -451,89 +501,115 @@ const CustomersPage = ({
       {!selected ? (
         <div className="structured-empty">Select a customer.</div>
       ) : (
-        <>
-          <div className="customer-hero">
-            <div>
-              <span className="eyebrow">Facility</span>
-              <h2>{selected.customer.name}</h2>
-              <p>
-                {selected.customer.city ?? 'Unknown city'},{' '}
-                {selected.customer.country ?? 'Unknown country'}
-              </p>
-            </div>
-            <div className="evidence-pill">{selected.evidence.length} evidence group(s)</div>
-          </div>
-          <div className="section-title">
-            <h3>Current installed-base projection</h3>
-            <span>{selected.projectionStrategy}</span>
-          </div>
-          <div className="projection-grid">
-            {selected.installedBase.map((item) => (
-              <article className="projection-card" key={item.projectionKey}>
-                <div className="projection-top">
-                  <span>{item.modality}</span>
-                  <b>× {item.quantity ?? '?'}</b>
-                </div>
-                <h4>
-                  {item.manufacturer ?? 'Unknown brand'} <span>{item.model ?? ''}</span>
-                </h4>
-                <dl>
-                  <div>
-                    <dt>Approx. age</dt>
-                    <dd>{ageText(item.approximateAge)}</dd>
-                  </div>
-                  <div>
-                    <dt>Installation</dt>
-                    <dd>{installationText(item.installationEstimate)}</dd>
-                  </div>
-                  <div>
-                    <dt>Confidence</dt>
-                    <dd>{item.confidence.level}</dd>
-                  </div>
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{item.status}</dd>
-                  </div>
-                  <div>
-                    <dt>Last observed</dt>
-                    <dd>{item.daysSinceLastObservation} day(s) ago</dd>
-                  </div>
-                  <div>
-                    <dt>Freshness</dt>
-                    <dd>{item.freshnessStatus}</dd>
-                  </div>
-                </dl>
-                <small>Trace: {item.contributingObservationIds.length} observation(s)</small>
-              </article>
-            ))}
-          </div>
-          <div className="section-title">
-            <h3>Supporting observations</h3>
-            <span>Append-only evidence</span>
-          </div>
-          <div className="evidence-table">
-            {selected.evidence.map((item) => (
-              <div className="evidence-row" key={item.equipmentObservationId}>
+        (() => {
+          const sessionEvidence = groupEvidenceBySession(selected.evidence);
+          const equipmentLabels = equipmentLabelsById(selected.installedBase);
+          return (
+            <>
+              <div className="customer-hero">
                 <div>
-                  <strong>{new Date(item.observedAt).toLocaleDateString()}</strong>
+                  <span className="eyebrow">Facility</span>
+                  <h2>{selected.customer.name}</h2>
+                  <p>
+                    {selected.customer.city ?? 'Unknown city'},{' '}
+                    {selected.customer.country ?? 'Unknown country'}
+                  </p>
+                </div>
+                <div className="evidence-pill">
+                  {plural(sessionEvidence.length, 'supporting visit', 'supporting visits')}
+                </div>
+              </div>
+              <div className="section-title">
+                <h3>Current installed-base projection</h3>
+                <span>{selected.projectionStrategy}</span>
+              </div>
+              <div className="projection-grid">
+                {selected.installedBase.map((item) => (
+                  <article className="projection-card" key={item.projectionKey}>
+                    <div className="projection-top">
+                      <span>{item.modality}</span>
+                      <b>× {item.quantity ?? '?'}</b>
+                    </div>
+                    <h4>
+                      {item.manufacturer ?? 'Unknown brand'} <span>{item.model ?? ''}</span>
+                    </h4>
+                    <dl>
+                      <div>
+                        <dt>Approx. age</dt>
+                        <dd>{ageText(item.approximateAge)}</dd>
+                      </div>
+                      <div>
+                        <dt>Installation</dt>
+                        <dd>{installationText(item.installationEstimate)}</dd>
+                      </div>
+                      <div>
+                        <dt>Confidence</dt>
+                        <dd>{item.confidence.level}</dd>
+                      </div>
+                      <div>
+                        <dt>Status</dt>
+                        <dd>{item.status}</dd>
+                      </div>
+                      <div>
+                        <dt>Last observed</dt>
+                        <dd>{plural(item.daysSinceLastObservation, 'day')} ago</dd>
+                      </div>
+                      <div>
+                        <dt>Freshness</dt>
+                        <dd>{item.freshnessStatus}</dd>
+                      </div>
+                    </dl>
+                    <small>
+                      Backed by {plural(item.contributingObservationIds.length, 'observation')}
+                    </small>
+                  </article>
+                ))}
+              </div>
+              <div className="section-title">
+                <h3>Supporting observations</h3>
+                <span>Append-only evidence, one row per visit</span>
+              </div>
+              <div className="evidence-table">
+                {sessionEvidence.map((session) => (
+                  <div className="evidence-row" key={session.sessionId}>
+                    <div>
+                      <strong>{new Date(session.observedAt).toLocaleDateString()}</strong>
+                      <span>
+                        {session.observerName} · {session.source}
+                      </span>
+                    </div>
+                    <p className="evidence-text">{session.rawInput ?? 'Non-text evidence'}</p>
+                    <div
+                      className="evidence-supports"
+                      title={session.equipmentObservationIds.join(', ')}
+                    >
+                      {[
+                        ...new Set(
+                          session.equipmentObservationIds.map(
+                            (id) => equipmentLabels.get(id) ?? 'Unmatched equipment',
+                          ),
+                        ),
+                      ].map((label) => (
+                        <span className="support-tag" key={label}>
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {selected.duplicateCandidates.length > 0 && (
+                <div className="duplicate-box">
+                  <strong>Possible matches detected</strong>
                   <span>
-                    {item.observerName} · {item.source}
+                    {plural(selected.duplicateCandidates.length, 'candidate')}, never merged
+                    automatically.
                   </span>
                 </div>
-                <p>{item.rawInput ?? 'Non-text evidence'}</p>
-                <code>{item.equipmentObservationId.slice(0, 12)}</code>
-              </div>
-            ))}
-          </div>
-          {selected.duplicateCandidates.length > 0 && (
-            <div className="duplicate-box">
-              <strong>Possible matches detected</strong>
-              <span>
-                {selected.duplicateCandidates.length} candidate(s), never merged automatically.
-              </span>
-            </div>
-          )}
-        </>
+              )}
+            </>
+          );
+        })()
       )}
     </section>
   </div>
