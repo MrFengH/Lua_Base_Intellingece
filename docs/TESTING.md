@@ -72,14 +72,14 @@ behaviour or a model change.
 | Complete observation            | facility, modality, quantity, brand, age all stated       | all fields `Known`, certainty `Explicit`           | any invented field                       |
 | Partial observation             | modality and quantity only                                | brand and model `null`, follow-up offered          | a guessed brand                          |
 | Unknown manufacturer            | "un tomógrafo, no vi la marca"                            | `manufacturer: null`                               | a brand inferred from context            |
-| Unknown model                   | "un GE, no pude ver el modelo"                            | `model: null`                                      | a model name inferred from the brand     |
-| Several devices in one sentence | "dos resonadores Siemens y un tomógrafo GE"               | separate MR and CT groups                          | one merged group                         |
+| Unknown model                   | "un equipo de Orion Imaging, no pude ver el modelo"       | `model: null`                                      | a model name inferred from the brand     |
+| Several devices in one sentence | "dos resonadores NovaMed y un tomógrafo Orion Imaging"    | separate MR and CT groups                          | one merged group                         |
 | Differing ages, same modality   | "dos tienen unos nueve años y uno unos tres"              | two groups, 2 at ≈9 and 1 at ≈3                    | one group of three with an averaged age  |
 | Speaker self-corrects           | "primero pensé que eran tres, pero en realidad había dos" | quantity 2                                         | quantity 3, or both                      |
 | Ambiguous quantity              | "había varios ecógrafos"                                  | `quantity: null`, follow-up offered                | an invented number                       |
 | Approximate age                 | "quizá unos ocho años"                                    | `{ type: 'estimate', ... }`, certainty `Uncertain` | `{ type: 'exact', years: 8 }`            |
 | Qualitative age                 | "parece bastante nuevo"                                   | `{ type: 'qualitative', label: ... }`              | any numeric age                          |
-| Contradictory information       | "era un Siemens... bueno, quizá un Philips"               | explicit uncertainty or a follow-up                | a silent pick between the two            |
+| Contradictory information       | "era de NovaMed... bueno, quizá de Aurelia Health"        | explicit uncertainty or a follow-up                | a silent pick between the two            |
 | Colloquial phrasing             | "tenían un par de máquinas de resonancia bastante viejas" | MR, quantity 2, qualitative age                    | a numeric age from "viejas"              |
 | Spanish                         | the README demo sentence in Spanish                       | correct extraction                                 | untranslated field values                |
 | English                         | the same in English                                       | correct extraction                                 | —                                        |
@@ -87,21 +87,37 @@ behaviour or a model change.
 
 ### The assertion that matters most
 
-Every case asserts an absence as well as a presence. Checking that "Siemens" appears is easy;
+Every case asserts an absence as well as a presence. Checking that "NovaMed" appears is easy;
 checking that no manufacturer appears when none was stated is the test that actually protects
 the data. Write both.
 
-### Reference cases from the brief
+### Project-authored reference cases
 
 ```
-"Había dos Siemens, creo que ambos eran resonadores."
-  → 2 × MR, manufacturer Siemens, certainty Uncertain on modality
+"Había dos equipos NovaMed, creo que ambos eran resonadores."
+  → 2 × MR, manufacturer NovaMed, certainty Uncertain on modality
 
-"El GE parecía viejo, quizá diez años, pero no pude ver el modelo."
-  → 1 × unknown-or-stated modality, manufacturer GE, age estimate ≈10, model null
+"El equipo de Orion Imaging parecía viejo, quizá diez años, pero no pude ver el modelo."
+  → 1 × unknown-or-stated modality, manufacturer Orion Imaging, age estimate ≈10, model null
 
 "Primero pensé que eran tres, pero en realidad había dos."
   → quantity 2
+```
+
+### Genuine examples from the challenge brief
+
+```
+"I visited Hospital Alpha today. They have three MR systems, two CT systems and four
+ ultrasound systems. Two of the MR systems appear to be around 8-10 years old."
+
+"I'm at Hospital Alpha in Sao Paulo. I saw two CT systems and three MR systems.
+ One of the MR systems looks relatively new."
+
+"There are three MR systems."
+
+User: "They have two CTs."
+Assistant: "Do you know the manufacturer or model?"
+User: "I know one is approximately six years old, but I don't know the model."
 ```
 
 ## Offline tests

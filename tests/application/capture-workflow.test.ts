@@ -180,3 +180,65 @@ describe('CaptureWorkflowService', () => {
     }
   });
 });
+
+describe('CaptureWorkflowService modality correction', () => {
+  it('stores a corrected modality exactly as selected from the official vocabulary', async () => {
+    const { database, repository, service } = createHarness();
+    try {
+      const started = service.start({
+        observerId: 'new-observer',
+        observedAt: '2026-09-08T12:00:00Z',
+      });
+      const extracted = await service.submitMessage(
+        started.id,
+        'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
+      );
+      const groupId = extracted.draft.equipment[0]?.id;
+      expect(groupId).toBeDefined();
+
+      const corrected = service.correct(started.id, {
+        equipment: [{ id: String(groupId), modality: 'Image Guided Therapy' }],
+      });
+
+      expect(corrected.draft.equipment[0]?.modality).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Image Guided Therapy' }),
+      );
+
+      service.proceedToReview(started.id);
+      const saved = service.save(started.id);
+      const view = repository.getCustomer360(saved.customerId, '2026-09-08T12:00:00Z');
+      expect(view?.installedBase.some((item) => item.modality === 'Image Guided Therapy')).toBe(
+        true,
+      );
+
+      const correctionEvidence = database.connection
+        .prepare("SELECT COUNT(*) AS count FROM evidence_items WHERE id LIKE 'correction:%'")
+        .get() as { count: number };
+      expect(correctionEvidence.count).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps an unrecognised corrected modality as Unknown rather than guessing', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      const extracted = await service.submitMessage(
+        started.id,
+        'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
+      );
+      const groupId = String(extracted.draft.equipment[0]?.id);
+
+      const corrected = service.correct(started.id, {
+        equipment: [{ id: groupId, modality: 'some unlisted device' }],
+      });
+
+      expect(corrected.draft.equipment[0]?.modality).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Unknown' }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+});

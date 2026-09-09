@@ -62,6 +62,7 @@ export const ObservationExtractionSchema = z
 export type ObservationExtraction = z.infer<typeof ObservationExtractionSchema>;
 export type ExtractedEquipment = z.infer<typeof ExtractedEquipmentSchema>;
 
+// Reserved seam for the natural-language analytics stretch goal cited in the official challenge brief; intentionally unwired.
 export const NaturalLanguageQueryIntentSchema = z
   .object({
     country: z.string().nullable(),

@@ -23,6 +23,10 @@ const NORMALIZED_MODALITIES = new Map<string, Modality>([
   ['patient monitor', 'Patient Monitoring'],
   ['monitor de paciente', 'Patient Monitoring'],
   ['monitoreo de pacientes', 'Patient Monitoring'],
+  ['image guided therapy', 'Image Guided Therapy'],
+  ['image-guided therapy', 'Image Guided Therapy'],
+  ['igt', 'Image Guided Therapy'],
+  ['terapia guiada por imagen', 'Image Guided Therapy'],
   ['unknown', 'Unknown'],
   ['desconocido', 'Unknown'],
 ]);

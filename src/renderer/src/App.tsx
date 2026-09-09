@@ -7,6 +7,7 @@ import type {
   DashboardView,
   InferenceRuntimeInfo,
 } from '@/application/contracts';
+import { MODALITIES } from '@/domain/model';
 import type { ApproximateAge, DraftField, InstallationEstimate } from '@/domain';
 import type { IpcResult } from '@/shared';
 
@@ -75,17 +76,21 @@ const RuntimeBadge = ({
   );
 };
 
+interface EquipmentEdit {
+  id: string;
+  modality: string;
+  quantity: string;
+  manufacturer: string;
+  model: string;
+  age: string;
+  notes: string;
+}
+
+type EquipmentEditField = Exclude<keyof EquipmentEdit, 'id'>;
+
 interface EditState {
   customer: { name: string; city: string; country: string };
-  equipment: Array<{
-    id: string;
-    modality: string;
-    quantity: string;
-    manufacturer: string;
-    model: string;
-    age: string;
-    notes: string;
-  }>;
+  equipment: EquipmentEdit[];
 }
 
 const editStateFromCapture = (capture: CaptureSessionView): EditState => ({
@@ -147,6 +152,18 @@ const CapturePage = ({
     if (!capture) return;
     setEditState(editStateFromCapture(capture));
     setEditing(true);
+  };
+  const updateEquipmentField = (id: string, field: EquipmentEditField, value: string): void => {
+    setEditState((current) =>
+      current
+        ? {
+            ...current,
+            equipment: current.equipment.map((candidate) =>
+              candidate.id === id ? { ...candidate, [field]: value } : candidate,
+            ),
+          }
+        : current,
+    );
   };
   const applyEdit = (): void => {
     if (!editState) return;
@@ -298,26 +315,33 @@ const CapturePage = ({
               <div className="edit-equipment" key={item.id}>
                 <strong>Equipment group {index + 1}</strong>
                 <div className="two-columns">
-                  {(['modality', 'quantity', 'manufacturer', 'model', 'age', 'notes'] as const).map(
-                    (field) => (
-                      <label key={field}>
-                        {field}
-                        <input
-                          value={item[field]}
-                          onChange={(event) =>
-                            setEditState({
-                              ...editState,
-                              equipment: editState.equipment.map((candidate) =>
-                                candidate.id === item.id
-                                  ? { ...candidate, [field]: event.target.value }
-                                  : candidate,
-                              ),
-                            })
-                          }
-                        />
-                      </label>
-                    ),
-                  )}
+                  <label>
+                    modality
+                    <select
+                      value={item.modality}
+                      onChange={(event) =>
+                        updateEquipmentField(item.id, 'modality', event.target.value)
+                      }
+                    >
+                      <option value="">Unknown (acknowledged)</option>
+                      {MODALITIES.map((modality) => (
+                        <option key={modality} value={modality}>
+                          {modality}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {(['quantity', 'manufacturer', 'model', 'age', 'notes'] as const).map((field) => (
+                    <label key={field}>
+                      {field}
+                      <input
+                        value={item[field]}
+                        onChange={(event) =>
+                          updateEquipmentField(item.id, field, event.target.value)
+                        }
+                      />
+                    </label>
+                  ))}
                 </div>
               </div>
             ))}

@@ -118,7 +118,7 @@ without adding a new entry that supersedes it.
 
 ## 13. Deduplication stays deterministic and never auto-merges
 
-**Context:** Two colleagues visiting the same hospital will both report a Siemens MR. Deciding whether that is one scanner or two is the core data-quality problem, and embedding similarity is the obvious tempting answer.
+**Context:** Two colleagues visiting the same hospital will both report a NovaMed MR. Deciding whether that is one scanner or two is the core data-quality problem, and embedding similarity is the obvious tempting answer.
 
 **Decision:** Keep the transparent scored candidate model. Same customer and compatible known modality are hard gates; manufacturer, model, and age adjust a versioned score with coded reasons. Candidates are surfaced for human resolution and are never merged automatically.
 

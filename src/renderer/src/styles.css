@@ -24,6 +24,7 @@ body {
 }
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -520,12 +521,14 @@ dd {
   display: grid;
   gap: 4px;
 }
-.edit-form input {
+.edit-form input,
+.edit-form select {
   width: 100%;
   border: 1px solid #d3e0e6;
   border-radius: 7px;
   padding: 8px;
   color: #233b4b;
+  background: #ffffff;
 }
 .two-columns {
   display: grid;

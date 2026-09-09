@@ -23,7 +23,7 @@ Natural-language observation to a validated structured record.
 
 |                    |                                                                                                                                                           |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Purpose**        | Turn "vi dos resonadores Siemens..." into schema-conformant equipment groups                                                                              |
+| **Purpose**        | Turn "vi dos resonadores NovaMed..." into schema-conformant equipment groups                                                                              |
 | **Model type**     | Instruction-tuned LLM with JSON-schema-constrained generation                                                                                             |
 | **QVAC plugin**    | `@qvac/sdk/llamacpp-completion/plugin`                                                                                                                    |
 | **Selected model** | `QWEN3_600M_INST_Q4` (`Qwen3-0.6B-Q4_0.gguf`)                                                                                                             |
@@ -88,7 +88,7 @@ depends on whether field colleagues switch languages mid-sentence, which nobody 
 
 **Quality bar to define before implementing — TBD.** Word error rate on hospital vocabulary
 (manufacturer names, modality words) matters far more than general WER, because the extraction
-step downstream can recover from ordinary transcription noise but not from "Siemens" becoming
+step downstream can recover from ordinary transcription noise but not from "NovaMed" becoming
 "seamless". Build a small held-out audio set before choosing.
 
 ## Capabilities deliberately not adopted
@@ -112,8 +112,9 @@ the bundle budget in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md).
 ## Model lifecycle policy
 
 - **Acquisition.** Registry download on first initialization, or a pre-provisioned local file
-  via `CIB_QVAC_MODEL_PATH`. Field deployment should prefer provisioning, so devices never need
-  the network. See [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md).
+  via `CIB_QVAC_MODEL_PATH`. Field deployment should prefer provisioning; follow the
+  [README provisioning procedure](../README.md#provisioning-the-model-on-another-machine). See
+  [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) for the offline posture and its validation status.
 - **Load.** Explicit, user-initiated, with visible progress.
 - **Reuse.** One load per session. Loading per request is a defect.
 - **Residency.** One model at a time today. Two resident models need a measured peak RAM figure

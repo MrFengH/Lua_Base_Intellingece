@@ -28,7 +28,7 @@ The default model is the SDK descriptor `QWEN3_600M_INST_Q4` (`Qwen3-0.6B-Q4_0.g
 
 ## Requirements
 
-- Node.js `>=22.17.0` and npm `>=10.9.0`; this repository has been verified with Node 24.
+- Node.js `>=24.20.0` and npm `>=10.9.0`; this repository has been verified with Node 24.20.0.
 - A desktop environment supported by Electron.
 - For QVAC on Windows, a Vulkan 1.4-capable runtime/driver as described in the [QVAC system requirements](https://docs.qvac.tether.io/system-requirements/).
 
@@ -59,6 +59,16 @@ $env:CIB_QVAC_MODEL_NAME = 'Locally managed model'
 ```
 
 `CIB_QVAC_MODEL_PATH` selects a local GGUF file and avoids the SDK registry download. `CIB_QVAC_MODEL_NAME` is display metadata. `CIB_DATABASE_PATH` overrides the application database path. An invalid `CIB_INFERENCE_MODE` fails explicitly; accepted values are `qvac` and `mock`. In an unpackaged development run the default is `mock`; in a packaged runtime the default is `qvac`.
+
+### Provisioning the model on another machine
+
+1. After QVAC has downloaded the default model, take `%USERPROFILE%\.qvac\models\*_Qwen3-0.6B-Q4_0.gguf` from the source machine.
+2. Copy that GGUF file to the target machine, for example as `C:\models\Qwen3-0.6B-Q4_0.gguf`.
+3. On the target, set `$env:CIB_QVAC_MODEL_PATH = 'C:\models\Qwen3-0.6B-Q4_0.gguf'` before starting in QVAC mode.
+4. With dependencies already installed, this explicit local path avoids a registry download; inference remains on-device.
+
+This procedure is documented but has not yet been followed on a second machine; that human
+validation remains pending.
 
 ## Demo path
 

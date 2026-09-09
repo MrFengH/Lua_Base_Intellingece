@@ -3,6 +3,7 @@ import type {
   CaptureEquipmentDraft,
   DraftField,
   EquipmentObservation,
+  EvidenceItem,
   FactCertainty,
   FieldProvenance,
   FieldOrigin,
@@ -40,6 +41,8 @@ interface MutableCaptureSession {
   source: ObservationSource;
   draft: CaptureDraft;
   messages: ConversationMessage[];
+  /** Manual review corrections, kept as evidence so corrected fields stay traceable. */
+  corrections: EvidenceItem[];
   pendingQuestion: FollowUpQuestion | null;
 }
 
@@ -127,6 +130,7 @@ export class CaptureWorkflowService {
         askedQuestionKeys: [],
       },
       messages: [],
+      corrections: [],
       pendingQuestion: null,
     };
     this.sessions.set(id, session);
@@ -178,6 +182,13 @@ export class CaptureWorkflowService {
     const session = this.requireSession(id);
     if (session.draft.state === 'SAVED') throw new Error('Saved evidence is immutable.');
     const evidenceId = `correction:${this.ids.next()}`;
+    session.corrections.push({
+      id: evidenceId,
+      sessionId: session.id,
+      source: session.source,
+      capturedAt: this.clock.now(),
+      rawText: 'Manual correction applied by the observer during review.',
+    });
     let customer = session.draft.customer;
     if (correction.customer) {
       customer = {
@@ -278,13 +289,16 @@ export class CaptureWorkflowService {
           city,
           country,
         },
-        evidence: userMessages.map((message) => ({
-          id: message.id,
-          sessionId: session.id,
-          source: session.source,
-          capturedAt: message.createdAt,
-          rawText: message.content,
-        })),
+        evidence: [
+          ...userMessages.map((message) => ({
+            id: message.id,
+            sessionId: session.id,
+            source: session.source,
+            capturedAt: message.createdAt,
+            rawText: message.content,
+          })),
+          ...session.corrections,
+        ],
       },
       equipment,
     };

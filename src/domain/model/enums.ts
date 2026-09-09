@@ -4,6 +4,7 @@ export const MODALITIES = [
   'Ultrasound',
   'X-Ray',
   'Patient Monitoring',
+  'Image Guided Therapy',
   'Unknown',
 ] as const;
 

@@ -39,11 +39,11 @@ These are three independent axes, defined in `src/domain/model/enums.ts`.
 
 **`FactCertainty`** — how firm was the statement?
 
-- `Explicit` — "it is a Siemens".
-- `Uncertain` — "I think it was a Siemens".
+- `Explicit` — "the manufacturer is NovaMed".
+- `Uncertain` — "I think the manufacturer was NovaMed".
 - `Unknown`.
 
-The combination is what makes the record honest. "I think it was a Siemens" is
+The combination is what makes the record honest. "I think the manufacturer was NovaMed" is
 `Known` + `Reported` + `Uncertain`, not `Known` + `Observed` + `Explicit`.
 
 During a pending follow-up, declared-unknown replies are recognised deterministically rather than
@@ -130,27 +130,52 @@ The raw material. Table `evidence_items`.
 `Voice` and `Photo` are declared in the enum and the table constraint but no adapter produces
 them yet — **PLANNED**. A voice transcript belongs here as `rawText` with `source: 'Voice'`.
 
+A manual correction applied in the review step is itself evidence. Each applied correction is
+recorded as an evidence item whose id is prefixed `correction:`, so a corrected field's
+provenance points at something that exists rather than at a dangling reference.
+
 ### EquipmentObservation
 
 One group of equipment reported in one session. Table `equipment_observations`.
 
-| Field                  | Required           | Kind        | Notes                                                              |
-| ---------------------- | ------------------ | ----------- | ------------------------------------------------------------------ |
-| `id`                   | yes                |             |                                                                    |
-| `sessionId`            | yes                |             |                                                                    |
-| `groupOrder`           | yes                |             | preserves the order the person described things                    |
-| `modality`             | yes                | inferred    | `MR`, `CT`, `Ultrasound`, `X-Ray`, `Patient Monitoring`, `Unknown` |
-| `rawModality`          | optional, nullable | observed    | the words actually used, kept when normalization is not certain    |
-| `quantity`             | nullable           | inferred    | positive integer or null                                           |
-| `manufacturer`         | nullable           | inferred    |                                                                    |
-| `model`                | nullable           | inferred    |                                                                    |
-| `approximateAge`       | yes                | inferred    | the union above                                                    |
-| `installationEstimate` | yes                | **derived** | from age plus `observedAt`                                         |
-| `confidence`           | yes                | derived     | `ConfidenceAssessment`                                             |
-| `status`               | yes                | derived     | `Confirmed`, `Reported`, `Estimated`, `Unknown`                    |
-| `notes`                | nullable           | observed    |                                                                    |
-| `evidenceIds`          | yes                |             | which evidence supports this group                                 |
-| `fieldProvenance`      | yes                |             | per-field knowledge state, origin, certainty, evidence ids         |
+| Field                  | Required           | Kind        | Notes                                                           |
+| ---------------------- | ------------------ | ----------- | --------------------------------------------------------------- |
+| `id`                   | yes                |             |                                                                 |
+| `sessionId`            | yes                |             |                                                                 |
+| `groupOrder`           | yes                |             | preserves the order the person described things                 |
+| `modality`             | yes                | inferred    | the closed vocabulary below                                     |
+| `rawModality`          | optional, nullable | observed    | the words actually used, kept when normalization is not certain |
+| `quantity`             | nullable           | inferred    | positive integer or null                                        |
+| `manufacturer`         | nullable           | inferred    |                                                                 |
+| `model`                | nullable           | inferred    |                                                                 |
+| `approximateAge`       | yes                | inferred    | the union above                                                 |
+| `installationEstimate` | yes                | **derived** | from age plus `observedAt`                                      |
+| `confidence`           | yes                | derived     | `ConfidenceAssessment`                                          |
+| `status`               | yes                | derived     | `Confirmed`, `Reported`, `Estimated`, `Unknown`                 |
+| `notes`                | nullable           | observed    |                                                                 |
+| `evidenceIds`          | yes                |             | which evidence supports this group                              |
+| `fieldProvenance`      | yes                |             | per-field knowledge state, origin, certainty, evidence ids      |
+
+#### Modality vocabulary
+
+A closed set, defined once in `src/domain/model/enums.ts` and embedded in the JSON schema the
+model must satisfy. The six values match the official `Dummy Reference Lists` modality list;
+`Unknown` is this project's addition and exists so uncertainty stays uncertain.
+
+| Value                  | Recognised synonyms, case and accent insensitive                                         |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `MR`                   | `mr`, `mri`, `magnetic resonance`, `resonancia`, `resonador`, `resonadores`              |
+| `CT`                   | `ct`, `cat scan`, `computed tomography`, `tomografia`, `tomografo`, `tomografos`         |
+| `Ultrasound`           | `ultrasound`, `ultrasonido`, `ultrasonidos`                                              |
+| `X-Ray`                | `x-ray`, `xray`, `rayos x`                                                               |
+| `Patient Monitoring`   | `patient monitoring`, `patient monitor`, `monitor de paciente`, `monitoreo de pacientes` |
+| `Image Guided Therapy` | `image guided therapy`, `image-guided therapy`, `igt`, `terapia guiada por imagen`       |
+| `Unknown`              | `unknown`, `desconocido`, and **anything unrecognised**                                  |
+
+`normalizeModality` never guesses. A bare `scanner` is ambiguous between MR and CT, so it
+normalizes to `Unknown` and the original wording is kept in `rawModality`. The correction form
+presents modality as a select over this vocabulary, so a typed value can no longer be silently
+discarded.
 
 **Grouping matters.** "Two are about nine years old and one is about three" is two groups, not
 one group of three with an averaged age. Averaging would fabricate.
@@ -212,16 +237,16 @@ supply 0.9.
 
 Input:
 
-> "Vi dos resonadores Siemens. Uno parece bastante nuevo y el otro probablemente tenga unos
-> ocho años. También había un tomógrafo GE, pero no pude ver el modelo."
+> "Vi dos resonadores NovaMed. Uno parece bastante nuevo y el otro probablemente tenga unos
+> ocho años. También había un tomógrafo Orion Imaging, pero no pude ver el modelo."
 
 Three groups, because the two MR units have different ages:
 
-| Group | modality | quantity | manufacturer | model  | approximateAge                                     | certainty   |
-| ----- | -------- | -------- | ------------ | ------ | -------------------------------------------------- | ----------- |
-| 1     | `MR`     | 1        | `Siemens`    | `null` | `{ type: 'qualitative', label: 'bastante nuevo' }` | `Uncertain` |
-| 2     | `MR`     | 1        | `Siemens`    | `null` | `{ type: 'estimate', minYears: 7, maxYears: 9 }`   | `Uncertain` |
-| 3     | `CT`     | 1        | `GE`         | `null` | `{ type: 'unknown' }`                              | `Explicit`  |
+| Group | modality | quantity | manufacturer    | model  | approximateAge                                     | certainty   |
+| ----- | -------- | -------- | --------------- | ------ | -------------------------------------------------- | ----------- |
+| 1     | `MR`     | 1        | `NovaMed`       | `null` | `{ type: 'qualitative', label: 'bastante nuevo' }` | `Uncertain` |
+| 2     | `MR`     | 1        | `NovaMed`       | `null` | `{ type: 'estimate', minYears: 7, maxYears: 9 }`   | `Uncertain` |
+| 3     | `CT`     | 1        | `Orion Imaging` | `null` | `{ type: 'unknown' }`                              | `Explicit`  |
 
 Note what does **not** happen: "bastante nuevo" does not become 2 years; the missing models stay
 `null` rather than being guessed from the manufacturer; "probablemente" makes the age
@@ -229,7 +254,7 @@ Note what does **not** happen: "bastante nuevo" does not become 2 years; the mis
 
 ## Deduplication
 
-The problem: two colleagues visit the same hospital and both report a Siemens MR. Are those the
+The problem: two colleagues visit the same hospital and both report a NovaMed MR. Are those the
 same scanner, or two scanners?
 
 **What exists today.** `DuplicateDetectionService` scores a pair and produces a
