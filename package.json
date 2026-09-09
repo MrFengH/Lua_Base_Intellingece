@@ -1,0 +1,48 @@
+{
+  "name": "philips-customer-installed-base-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first installed-base evidence capture prototype powered by QVAC.",
+  "main": "./dist/main/index.js",
+  "engines": {
+    "node": ">=22.17.0",
+    "npm": ">=10.9.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "seed": "tsx scripts/seed.ts",
+    "qvac:smoke": "tsx scripts/qvac-smoke.ts",
+    "sqlite:smoke": "tsx scripts/sqlite-smoke.ts"
+  },
+  "dependencies": {
+    "@qvac/sdk": "0.19.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.3.0",
+    "electron-vite": "5.0.0",
+    "eslint": "10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "prettier": "3.9.6",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vite": "7.3.6",
+    "vitest": "5.0.0"
+  }
+}
