@@ -46,6 +46,11 @@ const blankExtraction = (): ObservationExtraction => ({
   equipment: [],
 });
 
+const correctedManufacturerAnswer = (answer: string): string => {
+  const correction = answer.match(/^no\s+es\s+.+?,\s*es\s+(.+)$/iu);
+  return correction?.[1]?.trim() ?? answer;
+};
+
 const pendingModality = (context: ExtractionContext): Modality => {
   const id =
     context.pendingQuestion?.target.type === 'Equipment'
@@ -88,7 +93,7 @@ const pendingAnswer = (text: string, context: ExtractionContext): ObservationExt
     notes: null,
     certainty: 'Explicit' as const,
   };
-  if (question.field === 'Manufacturer') item.manufacturer = answer;
+  if (question.field === 'Manufacturer') item.manufacturer = correctedManufacturerAnswer(answer);
   if (question.field === 'Model') item.model = answer;
   if (question.field === 'Notes') item.notes = answer;
   if (question.field === 'Quantity') item.quantity = parseNumber(answer);

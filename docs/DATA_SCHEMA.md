@@ -46,6 +46,15 @@ These are three independent axes, defined in `src/domain/model/enums.ts`.
 The combination is what makes the record honest. "I think it was a Siemens" is
 `Known` + `Reported` + `Uncertain`, not `Known` + `Observed` + `Explicit`.
 
+During a pending follow-up, declared-unknown replies are recognised deterministically rather than
+sent to the extraction engine. Supported Spanish forms include `no sé`, `no se`, `no lo sé`,
+`no lo se`, `ni idea`, `no estoy seguro`, `no estoy segura`, `no me fijé`, `no sabría decir` and
+`ni idea la verdad`; the existing English forms include `I don't know`, `I do not know`, `unknown`
+and `not sure`. An isolated `no` is recognised only while answering a `Do you know…?` follow-up.
+The longer matcher is anchored to the start of the reply, while the short `no` form must be the
+entire reply, so a correction such as `no es NovaMed, es Orion Imaging` remains a known answer and
+proceeds through extraction.
+
 ## Age is a union, not a number
 
 `ApproximateAge` in `src/domain/model/age.ts`:

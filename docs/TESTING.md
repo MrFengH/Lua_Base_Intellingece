@@ -32,6 +32,7 @@ Current coverage:
 | `tests/domain/follow-up.test.ts`                           | Question ordering; a field declared unknown is never asked again                                                          |
 | `tests/domain/duplicate.test.ts`                           | Scoring on matching fields; modality as a hard gate even at the same hospital                                             |
 | `tests/application/capture-workflow.test.ts`               | Extraction, unknown handling, append-only save                                                                            |
+| `tests/application/extraction-schema.test.ts`              | Malformed extraction rejection: inverted ages, invalid modalities and extra properties; valid extraction acceptance       |
 | `tests/infrastructure/persistence.test.ts`                 | Atomic multi-equipment save; rollback on partial failure; idempotent seed                                                 |
 | `tests/infrastructure/development-mock-extraction.test.ts` | Heterogeneous age groups split rather than averaged                                                                       |
 
@@ -51,10 +52,10 @@ must guarantee regardless of model output:
 - an inference failure does not produce a partial or default record;
 - **no fallback to the mock ever occurs** when the engine is QVAC;
 - `dispose()` unloads and the reported status returns to `model-not-loaded`;
-- malformed model output fails Zod validation and is surfaced, not silently repaired.
 
-The last one deserves a dedicated test: feed the schema a plausible-looking but invalid payload
-and assert that it is rejected. That is the guard that keeps invented data out of the database.
+Malformed payload rejection at the contract boundary is covered directly by
+`tests/application/extraction-schema.test.ts`. An adapter integration test must still prove that
+the resulting validation failure is surfaced rather than silently repaired.
 
 ## Structured extraction tests
 

@@ -24,7 +24,10 @@ Verifiable properties today:
 
 - The only AI dependency is `@qvac/sdk`, running a local llama.cpp worker.
 - `@qvac/sdk` is imported in exactly one file, `src/infrastructure/qvac/qvac-observation-extraction.ts`.
-- No HTTP client, `fetch` call, or WebSocket exists anywhere in `src/`.
+- No HTTP client or `fetch` call exists anywhere in `src/`.
+- The production renderer CSP permits only `connect-src 'self'`; it carries no development
+  WebSocket or external network endpoint. Development alone permits `ws://localhost:*` for the
+  Vite development socket.
 - The renderer references no remote font, CDN, or external URL.
 - `qvac.config.json` configures no remote inference endpoint, because 0.19.0 has none.
 

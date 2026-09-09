@@ -8,6 +8,7 @@ coverage/
 *.sqlite-shm
 *.sqlite-wal
 .env
+reference/
 
 
 # Internal AI-assisted development infrastructure.

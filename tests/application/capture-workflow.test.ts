@@ -22,18 +22,37 @@ class SequenceIds implements IdGenerator {
   }
 }
 
+const createHarness = () => {
+  const database = new LocalSqliteDatabase(':memory:');
+  const repository = new SqliteInstalledBaseRepository(database);
+  applyDevelopmentSeed(repository);
+  const extractor = new DevelopmentMockObservationExtractionService();
+  const service = new CaptureWorkflowService(
+    extractor,
+    repository,
+    new FixedClock(),
+    new SequenceIds(),
+  );
+  return { database, repository, service };
+};
+
+const advanceToManufacturerQuestion = async (service: CaptureWorkflowService): Promise<string> => {
+  const started = service.start({
+    observerId: 'new-observer',
+    observedAt: '2026-09-08T12:00:00Z',
+  });
+  const extracted = await service.submitMessage(
+    started.id,
+    'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
+  );
+  expect(extracted.pendingQuestion?.field).toBe('Manufacturer');
+  return started.id;
+};
+
 describe('CaptureWorkflowService', () => {
   it('runs extraction, acknowledges unknown and saves append-only evidence for Customer 360', async () => {
-    const database = new LocalSqliteDatabase(':memory:');
+    const { database, repository, service } = createHarness();
     try {
-      const repository = new SqliteInstalledBaseRepository(database);
-      applyDevelopmentSeed(repository);
-      const service = new CaptureWorkflowService(
-        new DevelopmentMockObservationExtractionService(),
-        repository,
-        new FixedClock(),
-        new SequenceIds(),
-      );
       const started = service.start({
         observerId: 'new-observer',
         observedAt: '2026-09-08T12:00:00Z',
@@ -63,6 +82,99 @@ describe('CaptureWorkflowService', () => {
       expect(rawSessions.count).toBe(2);
       const view = repository.getCustomer360(saved.customerId, '2026-09-08T12:00:00Z');
       expect(view?.evidence.some((item) => item.observerName === 'Demo Collaborator')).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each([
+    'no lo sé',
+    'no lo se',
+    'ni idea',
+    'no estoy seguro',
+    'no estoy segura',
+    'no me fijé',
+    'no sabría decir',
+    'ni idea la verdad',
+    'no sé',
+    'no se',
+    "I don't know",
+    'I do not know',
+    'unknown',
+    'not sure',
+    'desconocido',
+    'desconocida',
+  ])('treats "%s" as a declared-unknown reply', async (reply) => {
+    const { database, service } = createHarness();
+    try {
+      const sessionId = await advanceToManufacturerQuestion(service);
+
+      const result = await service.submitMessage(sessionId, reply);
+
+      expect(result.draft.equipment[0]?.manufacturer.state).toBe('DeclaredUnknown');
+      expect(result.pendingQuestion?.field).toBe('ApproximateAge');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not treat a manufacturer correction containing a negation as unknown', async () => {
+    const { database, service } = createHarness();
+    try {
+      const sessionId = await advanceToManufacturerQuestion(service);
+      await service.submitMessage(sessionId, 'no sé');
+      const ctManufacturerQuestion = await service.submitMessage(sessionId, '8');
+      expect(ctManufacturerQuestion.pendingQuestion?.field).toBe('Manufacturer');
+
+      const result = await service.submitMessage(sessionId, 'no es NovaMed, es Orion Imaging');
+
+      const ctEquipment = result.draft.equipment.find(
+        (item) => item.modality.state === 'Known' && item.modality.value === 'CT',
+      );
+      expect(ctEquipment?.manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Orion Imaging' }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('treats an isolated "no" as declared unknown for a Do you know model follow-up', async () => {
+    const { database, service } = createHarness();
+    try {
+      const sessionId = await advanceToManufacturerQuestion(service);
+      let result = await service.submitMessage(sessionId, 'no sé');
+      result = await service.submitMessage(sessionId, '8');
+      result = await service.submitMessage(sessionId, 'no sé');
+      result = await service.submitMessage(sessionId, '8');
+      expect(result.pendingQuestion?.field).toBe('Model');
+      expect(result.pendingQuestion?.target.type).toBe('Equipment');
+      const targetId =
+        result.pendingQuestion?.target.type === 'Equipment'
+          ? result.pendingQuestion.target.equipmentGroupId
+          : null;
+
+      result = await service.submitMessage(sessionId, 'no');
+
+      expect(result.draft.equipment.find((item) => item.id === targetId)?.model.state).toBe(
+        'DeclaredUnknown',
+      );
+      expect(result.pendingQuestion?.key).not.toBe(`equipment:${targetId}:Model`);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not treat an isolated "no" as unknown for another kind of follow-up', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      const missingCustomer = await service.submitMessage(started.id, 'They have two MR systems.');
+      expect(missingCustomer.pendingQuestion?.text).toBe('What hospital or clinic did you visit?');
+
+      const result = await service.submitMessage(started.id, 'no');
+
+      expect(result.draft.customer.name).toEqual(expect.objectContaining({ state: 'Known' }));
     } finally {
       database.close();
     }

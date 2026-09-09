@@ -77,10 +77,15 @@ const ageOrMissing = (
     ? missingField<ExtractedEquipment['approximateAge']>()
     : knownField(value, 'Reported', [evidenceId]);
 
-const isUnknownReply = (text: string): boolean =>
-  /^(?:i\s+(?:do\s+not|don't)\s+know|unknown|not\s+sure|no\s+s[eé]|desconocid[oa])\b/i.test(
-    text.trim(),
+const isUnknownReply = (text: string, question: FollowUpQuestion): boolean => {
+  const reply = text.trim();
+  return (
+    (/^no[.!?]*$/i.test(reply) && question.text.startsWith('Do you know')) ||
+    /^(?:i\s+(?:do\s+not|don't)\s+know|unknown|not\s+sure|no\s+(?:lo\s+)?s[eé]|ni\s+idea(?:\s+la\s+verdad)?|no\s+estoy\s+segur[oa]|no\s+me\s+fij[eé]|no\s+sabr[ií]a\s+decir|desconocid[oa])(?=$|[\s.,;:!?])/i.test(
+      reply,
+    )
   );
+};
 
 export class CaptureWorkflowService {
   private readonly sessions = new Map<string, MutableCaptureSession>();
@@ -147,7 +152,7 @@ export class CaptureWorkflowService {
     session.draft = { ...session.draft, state: 'EXTRACTING' };
 
     try {
-      if (session.pendingQuestion && isUnknownReply(text)) {
+      if (session.pendingQuestion && isUnknownReply(text, session.pendingQuestion)) {
         session.draft = this.markPendingUnknown(session.draft, session.pendingQuestion, message.id);
       } else {
         const extraction = await this.extractor.extract(text, {
