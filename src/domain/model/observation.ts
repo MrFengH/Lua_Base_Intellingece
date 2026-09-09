@@ -47,7 +47,8 @@ export interface EvidenceItem {
 export interface FieldProvenance {
   knowledgeState: KnowledgeState;
   origin: FieldOrigin;
-  certainty: FactCertainty;
+  /** `null` means the extractor supplied no certainty; it must not be promoted to Explicit. */
+  certainty: FactCertainty | null;
   evidenceIds: readonly EntityId[];
   derivation?: Readonly<Record<string, unknown>>;
 }

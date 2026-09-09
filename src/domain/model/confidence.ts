@@ -4,7 +4,7 @@ export interface ConfidenceFact {
   field: string;
   knowledgeState: KnowledgeState;
   origin: FieldOrigin;
-  certainty: FactCertainty;
+  certainty: FactCertainty | null;
   evidenceIds?: readonly string[];
 }
 

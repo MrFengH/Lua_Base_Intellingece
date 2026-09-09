@@ -69,16 +69,24 @@ const fieldOrigin = (field: DraftField<unknown>): FieldOrigin =>
 const fieldEvidence = (field: DraftField<unknown>): readonly string[] =>
   field.state === 'Missing' ? [] : field.evidenceIds;
 
-const textOrUnknown = (value: string | null, evidenceId: string): DraftField<string> =>
-  value === null ? missingField<string>() : knownField(value, 'Reported', [evidenceId]);
+const fieldCertainty = (field: DraftField<unknown>): FactCertainty | null =>
+  field.state === 'Known' ? field.certainty : 'Unknown';
+
+const textOrUnknown = (
+  value: string | null,
+  evidenceId: string,
+  certainty: FactCertainty | null,
+): DraftField<string> =>
+  value === null ? missingField<string>() : knownField(value, 'Reported', [evidenceId], certainty);
 
 const ageOrMissing = (
   value: ExtractedEquipment['approximateAge'],
   evidenceId: string,
+  certainty: FactCertainty | null,
 ): DraftField<ExtractedEquipment['approximateAge']> =>
   value.type === 'unknown'
     ? missingField<ExtractedEquipment['approximateAge']>()
-    : knownField(value, 'Reported', [evidenceId]);
+    : knownField(value, 'Reported', [evidenceId], certainty);
 
 const isUnknownReply = (text: string, question: FollowUpQuestion): boolean => {
   const reply = text.trim();
@@ -211,20 +219,11 @@ export class CaptureWorkflowService {
         quantity: this.correctNumber(item.quantity, change.quantity, evidenceId),
         manufacturer: this.correctText(item.manufacturer, change.manufacturer, evidenceId),
         model: this.correctText(item.model, change.model, evidenceId),
-        approximateAge:
-          change.approximateAgeYears === undefined
-            ? item.approximateAge
-            : change.approximateAgeYears === null
-              ? declaredUnknownField<ExtractedEquipment['approximateAge']>([evidenceId])
-              : knownField(
-                  {
-                    type: 'estimate' as const,
-                    minYears: change.approximateAgeYears,
-                    maxYears: change.approximateAgeYears,
-                  },
-                  'Reported',
-                  [evidenceId],
-                ),
+        approximateAge: this.correctAge(
+          item.approximateAge,
+          change.approximateAgeYears,
+          evidenceId,
+        ),
         notes: this.correctText(item.notes, change.notes, evidenceId),
       };
     });
@@ -366,7 +365,7 @@ export class CaptureWorkflowService {
         {
           knowledgeState: knowledgeState(value),
           origin: fieldOrigin(value),
-          certainty: (value.state === 'Known' ? 'Explicit' : 'Unknown') as FactCertainty,
+          certainty: fieldCertainty(value),
           evidenceIds: fieldEvidence(value),
         },
       ]),
@@ -376,7 +375,7 @@ export class CaptureWorkflowService {
         field,
         knowledgeState: knowledgeState(value),
         origin: fieldOrigin(value),
-        certainty: (value.state === 'Known' ? 'Explicit' : 'Unknown') as FactCertainty,
+        certainty: fieldCertainty(value),
         evidenceIds: fieldEvidence(value),
       })),
     );
@@ -388,7 +387,7 @@ export class CaptureWorkflowService {
       sessionId,
       groupOrder: item.order,
       modality,
-      rawModality: null,
+      rawModality: item.rawModality,
       quantity: nullableValue(item.quantity),
       manufacturer: nullableValue(item.manufacturer),
       model: nullableValue(item.model),
@@ -450,27 +449,33 @@ export class CaptureWorkflowService {
     return {
       id: existing?.id ?? this.ids.next(),
       order: existing?.order ?? order,
-      modality: knownField(normalizeModality(value.modality), 'Reported', [evidenceId]),
+      modality: knownField(
+        normalizeModality(value.modality),
+        'Reported',
+        [evidenceId],
+        value.certainty,
+      ),
+      rawModality: value.rawModality ?? existing?.rawModality ?? null,
       quantity:
         value.quantity === null
           ? (existing?.quantity ?? missingField<number>())
-          : knownField(value.quantity, 'Reported', [evidenceId]),
+          : knownField(value.quantity, 'Reported', [evidenceId], value.certainty),
       manufacturer:
         value.manufacturer === null
           ? (existing?.manufacturer ?? missingField<string>())
-          : knownField(value.manufacturer, 'Reported', [evidenceId]),
+          : knownField(value.manufacturer, 'Reported', [evidenceId], value.certainty),
       model:
         value.model === null
           ? (existing?.model ?? missingField<string>())
-          : knownField(value.model, 'Reported', [evidenceId]),
+          : knownField(value.model, 'Reported', [evidenceId], value.certainty),
       approximateAge:
         value.approximateAge.type === 'unknown'
           ? (existing?.approximateAge ?? missingField())
-          : ageOrMissing(value.approximateAge, evidenceId),
+          : ageOrMissing(value.approximateAge, evidenceId, value.certainty),
       notes:
         value.notes === null
           ? (existing?.notes ?? missingField())
-          : textOrUnknown(value.notes, evidenceId),
+          : textOrUnknown(value.notes, evidenceId, value.certainty),
     };
   }
 
@@ -557,6 +562,23 @@ export class CaptureWorkflowService {
     return value === null
       ? declaredUnknownField([evidenceId])
       : knownField(value, 'Reported', [evidenceId]);
+  }
+
+  /**
+   * `undefined` means the observer did not touch this field, so any existing age — including a
+   * qualitative label, a range, or a min/max estimate — must survive untouched. `null` is an
+   * explicit clear action. A number is an explicit exact age, never a fabricated min-equals-max
+   * estimate.
+   */
+  private correctAge(
+    current: DraftField<ExtractedEquipment['approximateAge']>,
+    value: number | null | undefined,
+    evidenceId: string,
+  ): DraftField<ExtractedEquipment['approximateAge']> {
+    if (value === undefined) return current;
+    return value === null
+      ? declaredUnknownField<ExtractedEquipment['approximateAge']>([evidenceId])
+      : knownField({ type: 'exact' as const, years: value }, 'Reported', [evidenceId]);
   }
 
   private requireSession(id: string): MutableCaptureSession {

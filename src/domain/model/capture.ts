@@ -1,5 +1,11 @@
 import type { ApproximateAge } from './age';
-import type { CaptureState, FieldOrigin, Modality, ObservationSource } from './enums';
+import type {
+  CaptureState,
+  FactCertainty,
+  FieldOrigin,
+  Modality,
+  ObservationSource,
+} from './enums';
 
 export type DraftField<T> =
   | { state: 'Missing' }
@@ -7,6 +13,7 @@ export type DraftField<T> =
       state: 'Known';
       value: T;
       origin: FieldOrigin;
+      certainty: FactCertainty | null;
       evidenceIds: readonly string[];
     }
   | {
@@ -20,7 +27,8 @@ export const knownField = <T>(
   value: T,
   origin: FieldOrigin = 'Reported',
   evidenceIds: readonly string[] = [],
-): DraftField<T> => ({ state: 'Known', value, origin, evidenceIds });
+  certainty: FactCertainty | null = 'Explicit',
+): DraftField<T> => ({ state: 'Known', value, origin, certainty, evidenceIds });
 
 export const declaredUnknownField = <T>(evidenceIds: readonly string[] = []): DraftField<T> => ({
   state: 'DeclaredUnknown',
@@ -37,6 +45,7 @@ export interface CaptureEquipmentDraft {
   id: string;
   order: number;
   modality: DraftField<Modality>;
+  rawModality: string | null;
   quantity: DraftField<number>;
   manufacturer: DraftField<string>;
   model: DraftField<string>;

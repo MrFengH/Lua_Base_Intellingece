@@ -559,6 +559,16 @@ dd {
 .edit-equipment strong {
   font-size: 12px;
 }
+.preserved-age {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #e0e9ed;
+  border-radius: 4px;
+  background: #f5f9fa;
+}
 .action-row {
   display: flex;
   justify-content: flex-end;

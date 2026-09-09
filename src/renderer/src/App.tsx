@@ -131,16 +131,33 @@ interface EquipmentEdit {
   quantity: string;
   manufacturer: string;
   model: string;
+  /** Numeric text, meaningful only while `ageKind` is 'editable'. */
   age: string;
+  /**
+   * 'preserved' means the current age cannot be represented as a single number without
+   * fabricating one (qualitative, a range, or an estimate with different min/max) and is
+   * rendered read-only. It becomes 'editable' only if the observer explicitly clears it.
+   */
+  ageKind: 'editable' | 'preserved';
+  ageLabel: string;
   notes: string;
 }
 
-type EquipmentEditField = Exclude<keyof EquipmentEdit, 'id'>;
+type EquipmentEditField = 'modality' | 'quantity' | 'manufacturer' | 'model' | 'age' | 'notes';
 
 interface EditState {
   customer: { name: string; city: string; country: string };
   equipment: EquipmentEdit[];
 }
+
+/** The single year a plain number input can represent without inventing precision, or `null` for
+ * anything else — qualitative, a range, or an estimate whose bounds differ — which must be
+ * preserved rather than edited. */
+const singleAgeYears = (age: ApproximateAge): number | null => {
+  if (age.type === 'exact') return age.years;
+  if (age.type === 'estimate' && age.minYears === age.maxYears) return age.minYears;
+  return null;
+};
 
 const editStateFromCapture = (capture: CaptureSessionView): EditState => ({
   customer: {
@@ -149,23 +166,22 @@ const editStateFromCapture = (capture: CaptureSessionView): EditState => ({
     country:
       capture.draft.customer.country.state === 'Known' ? capture.draft.customer.country.value : '',
   },
-  equipment: capture.draft.equipment.map((item) => ({
-    id: item.id,
-    modality: item.modality.state === 'Known' ? item.modality.value : '',
-    quantity: item.quantity.state === 'Known' ? String(item.quantity.value) : '',
-    manufacturer: item.manufacturer.state === 'Known' ? item.manufacturer.value : '',
-    model: item.model.state === 'Known' ? item.model.value : '',
-    age:
-      item.approximateAge.state === 'Known' &&
-      (item.approximateAge.value.type === 'exact' || item.approximateAge.value.type === 'estimate')
-        ? String(
-            item.approximateAge.value.type === 'exact'
-              ? item.approximateAge.value.years
-              : item.approximateAge.value.minYears,
-          )
-        : '',
-    notes: item.notes.state === 'Known' ? item.notes.value : '',
-  })),
+  equipment: capture.draft.equipment.map((item) => {
+    const age = item.approximateAge;
+    const knownAge = age.state === 'Known' ? age.value : null;
+    const singleYears = knownAge ? singleAgeYears(knownAge) : null;
+    return {
+      id: item.id,
+      modality: item.modality.state === 'Known' ? item.modality.value : '',
+      quantity: item.quantity.state === 'Known' ? String(item.quantity.value) : '',
+      manufacturer: item.manufacturer.state === 'Known' ? item.manufacturer.value : '',
+      model: item.model.state === 'Known' ? item.model.value : '',
+      age: singleYears !== null ? String(singleYears) : '',
+      ageKind: knownAge !== null && singleYears === null ? 'preserved' : 'editable',
+      ageLabel: knownAge ? ageText(knownAge) : '',
+      notes: item.notes.state === 'Known' ? item.notes.value : '',
+    };
+  }),
 });
 
 const CapturePage = ({
@@ -192,6 +208,7 @@ const CapturePage = ({
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState(false);
   const [editState, setEditState] = useState<EditState | null>(null);
+  const [editOriginal, setEditOriginal] = useState<EditState | null>(null);
   const send = (): void => {
     if (!input.trim()) return;
     submit(input.trim());
@@ -199,7 +216,9 @@ const CapturePage = ({
   };
   const beginEdit = (): void => {
     if (!capture) return;
-    setEditState(editStateFromCapture(capture));
+    const state = editStateFromCapture(capture);
+    setEditState(state);
+    setEditOriginal(state);
     setEditing(true);
   };
   const updateEquipmentField = (id: string, field: EquipmentEditField, value: string): void => {
@@ -214,23 +233,50 @@ const CapturePage = ({
         : current,
     );
   };
+  /** The only way to change a preserved (non-numeric) age: an explicit clear, never an implicit
+   * numeric guess. Switches the field to an editable, blank numeric input. */
+  const clearPreservedAge = (id: string): void => {
+    setEditState((current) =>
+      current
+        ? {
+            ...current,
+            equipment: current.equipment.map((candidate) =>
+              candidate.id === id ? { ...candidate, ageKind: 'editable', age: '' } : candidate,
+            ),
+          }
+        : current,
+    );
+  };
   const applyEdit = (): void => {
-    if (!editState) return;
+    if (!editState || !editOriginal) return;
+    const textChange = (current: string, original: string): string | null | undefined =>
+      current === original ? undefined : current || null;
+    const numberChange = (current: string, original: string): number | null | undefined =>
+      current === original ? undefined : current ? Number(current) : null;
+    const ageChange = (item: EquipmentEdit, original: EquipmentEdit): number | null | undefined => {
+      if (item.ageKind === 'preserved') return undefined;
+      if (original.ageKind === 'preserved') return item.age ? Number(item.age) : null;
+      return numberChange(item.age, original.age);
+    };
     correct({
       customer: {
-        name: editState.customer.name || null,
-        city: editState.customer.city || null,
-        country: editState.customer.country || null,
+        name: textChange(editState.customer.name, editOriginal.customer.name),
+        city: textChange(editState.customer.city, editOriginal.customer.city),
+        country: textChange(editState.customer.country, editOriginal.customer.country),
       },
-      equipment: editState.equipment.map((item) => ({
-        id: item.id,
-        modality: item.modality || null,
-        quantity: item.quantity ? Number(item.quantity) : null,
-        manufacturer: item.manufacturer || null,
-        model: item.model || null,
-        approximateAgeYears: item.age ? Number(item.age) : null,
-        notes: item.notes || null,
-      })),
+      equipment: editState.equipment.map((item) => {
+        const original =
+          editOriginal.equipment.find((candidate) => candidate.id === item.id) ?? item;
+        return {
+          id: item.id,
+          modality: textChange(item.modality, original.modality),
+          quantity: numberChange(item.quantity, original.quantity),
+          manufacturer: textChange(item.manufacturer, original.manufacturer),
+          model: textChange(item.model, original.model),
+          approximateAgeYears: ageChange(item, original),
+          notes: textChange(item.notes, original.notes),
+        };
+      }),
     });
     setEditing(false);
   };
@@ -380,7 +426,7 @@ const CapturePage = ({
                       ))}
                     </select>
                   </label>
-                  {(['quantity', 'manufacturer', 'model', 'age', 'notes'] as const).map((field) => (
+                  {(['quantity', 'manufacturer', 'model', 'notes'] as const).map((field) => (
                     <label key={field}>
                       {field}
                       <input
@@ -391,6 +437,28 @@ const CapturePage = ({
                       />
                     </label>
                   ))}
+                  <label>
+                    age
+                    {item.ageKind === 'preserved' ? (
+                      <div className="preserved-age">
+                        <span>{item.ageLabel}</span>
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => clearPreservedAge(item.id)}
+                        >
+                          Clear age
+                        </button>
+                      </div>
+                    ) : (
+                      <input
+                        value={item.age}
+                        onChange={(event) =>
+                          updateEquipmentField(item.id, 'age', event.target.value)
+                        }
+                      />
+                    )}
+                  </label>
                 </div>
               </div>
             ))}

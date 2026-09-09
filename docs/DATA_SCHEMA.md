@@ -43,6 +43,10 @@ These are three independent axes, defined in `src/domain/model/enums.ts`.
 - `Uncertain` — "I think the manufacturer was NovaMed".
 - `Unknown`.
 
+For live extraction, `certainty` may also be `null` when the extractor supplied no certainty at
+all. `null` means "not supplied"; `Unknown` means the extractor explicitly classified certainty as
+unknown. Neither is promoted to `Explicit`.
+
 The combination is what makes the record honest. "I think the manufacturer was NovaMed" is
 `Known` + `Reported` + `Uncertain`, not `Known` + `Observed` + `Explicit`.
 
@@ -230,7 +234,8 @@ deliberately narrower than the domain model: the model produces observations, an
 derives everything else.
 
 The model returns: `customer { name, city, country }` and `equipment[] { modality, rawModality,
-quantity, manufacturer, model, approximateAge, notes, certainty }`. It does **not** return
+quantity, manufacturer, model, approximateAge, notes, certainty }`. `certainty` is nullable when
+the extractor supplies no assessment. It does **not** return
 confidence scores, installation years, provenance, or duplicate judgements. Those are computed
 from rules the team can inspect and version, not asserted by a model.
 

@@ -21,6 +21,7 @@ const draft = (): CaptureDraft => ({
       id: 'mr-group',
       order: 0,
       modality: knownField('MR'),
+      rawModality: 'MR',
       quantity: knownField(2),
       manufacturer: missingField(),
       model: missingField(),

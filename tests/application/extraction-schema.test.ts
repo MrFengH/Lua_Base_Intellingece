@@ -75,4 +75,16 @@ describe('ObservationExtractionSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data).toEqual(validExtraction);
   });
+
+  it('keeps missing model certainty absent instead of defaulting it to Explicit', () => {
+    const withoutCertainty = Object.fromEntries(
+      Object.entries(validEquipment).filter(([key]) => key !== 'certainty'),
+    );
+    const result = ObservationExtractionSchema.parse({
+      ...validExtraction,
+      equipment: [withoutCertainty],
+    });
+
+    expect(result.equipment[0]?.certainty).toBeNull();
+  });
 });

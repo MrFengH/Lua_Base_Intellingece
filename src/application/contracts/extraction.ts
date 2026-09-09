@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MODALITIES } from '@/domain/model';
+import { FACT_CERTAINTIES, MODALITIES } from '@/domain/model';
 
 export const ApproximateAgeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('exact'), years: z.number().nonnegative() }).strict(),
@@ -30,7 +30,7 @@ export const ExtractedEquipmentSchema = z
     model: z.string().min(1).nullable(),
     approximateAge: ApproximateAgeSchema,
     notes: z.string().min(1).nullable().default(null),
-    certainty: z.enum(['Explicit', 'Uncertain', 'Unknown']).default('Explicit'),
+    certainty: z.enum(FACT_CERTAINTIES).nullable().default(null),
   })
   .strict();
 
