@@ -2,6 +2,7 @@ import type {
   Customer,
   DuplicateCandidate,
   DuplicateComparableObservation,
+  ResolvedDuplicateResolution,
   SavedObservationAggregate,
 } from '@/domain';
 import type { Customer360View, CustomerListItem, DashboardView } from '../contracts';
@@ -29,6 +30,7 @@ export interface EquipmentObservationRepository {
 
 export interface DuplicateCandidateRepository {
   listForCustomer(customerId: string): readonly DuplicateCandidate[];
+  resolveDuplicateCandidate(candidateId: string, resolution: ResolvedDuplicateResolution): void;
 }
 
 export interface InstalledBaseQueryRepository {

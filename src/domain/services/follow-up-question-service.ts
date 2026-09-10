@@ -1,4 +1,11 @@
-import type { CaptureDraft, CaptureEquipmentDraft, DraftField, FollowUpQuestion } from '../model';
+import type {
+  CaptureDraft,
+  CaptureEquipmentDraft,
+  DraftField,
+  FieldContradiction,
+  FollowUpQuestion,
+} from '../model';
+import { contradictionQuestionText } from '../rules/contradiction';
 
 const isMissing = <T>(field: DraftField<T>): boolean => field.state === 'Missing';
 
@@ -20,9 +27,38 @@ const equipmentQuestion = (
   text,
 });
 
+/**
+ * The provenance question is asked at most once per session. It is `Preferred`, never
+ * `Required`: the official sheet marks status derived, and declining must stay acceptable.
+ */
+export const OBSERVATION_BASIS_QUESTION_KEY = 'equipment:collection:ObservationBasis';
+
+/**
+ * A contradiction question names both claims and asks which to keep. Its key carries the later
+ * value so a second disagreement about the same field is a new question rather than a silent
+ * repeat of the first.
+ */
+const contradictionQuestion = (
+  equipment: CaptureEquipmentDraft,
+  contradiction: FieldContradiction,
+): FollowUpQuestion => ({
+  key: `equipment:${equipment.id}:contradiction:${contradiction.field}:${contradiction.currentText}`,
+  field: contradiction.field,
+  priority: 'Required',
+  target: { type: 'Equipment', equipmentGroupId: equipment.id },
+  text: contradictionQuestionText(contradiction, equipmentLabel(equipment)),
+});
+
 /** Picks exactly one highest-value missing field; DeclaredUnknown fields are never candidates. */
 export class FollowUpQuestionService {
   next(draft: CaptureDraft): FollowUpQuestion | null {
+    // An unresolved disagreement outranks every gap: the draft already holds a claim that the
+    // observer contradicted, and no later answer makes that go away on its own.
+    for (const equipment of draft.equipment) {
+      const contradiction = equipment.contradictions[0];
+      if (contradiction) return contradictionQuestion(equipment, contradiction);
+    }
+
     if (isMissing(draft.customer.name)) {
       return {
         key: 'customer:name',
@@ -89,6 +125,19 @@ export class FollowUpQuestionService {
           `Do you know the approximate age of the ${equipmentLabel(equipment)} systems?`,
         );
       }
+    }
+
+    if (
+      isMissing(draft.observationBasis) &&
+      !draft.askedQuestionKeys.includes(OBSERVATION_BASIS_QUESTION_KEY)
+    ) {
+      return {
+        key: OBSERVATION_BASIS_QUESTION_KEY,
+        field: 'ObservationBasis',
+        priority: 'Preferred',
+        target: { type: 'EquipmentCollection' },
+        text: 'Did you observe this equipment directly, was it reported to you by someone else, or is it an estimate?',
+      };
     }
 
     for (const equipment of draft.equipment) {

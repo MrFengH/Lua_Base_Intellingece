@@ -8,6 +8,7 @@ import type {
   InstallationEstimate,
   Modality,
   ObservationStatus,
+  ResolvedDuplicateResolution,
   SavedObservationAggregate,
 } from '@/domain';
 import { normalizeName } from '@/domain';
@@ -15,6 +16,8 @@ import type {
   Customer360View,
   CustomerListItem,
   DashboardView,
+  DuplicateCandidateReview,
+  DuplicateReviewObservation,
   InstalledBaseItem,
   ObservationEvidenceView,
 } from '@/application/contracts';
@@ -145,9 +148,27 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       explanation: parseJson(row.explanation_json),
       relationship: stringValue(row, 'relationship') as DuplicateCandidate['relationship'],
       resolution: stringValue(row, 'resolution') as DuplicateCandidate['resolution'],
-      algorithmVersion: 'duplicate-v1',
+      algorithmVersion: stringValue(
+        row,
+        'algorithm_version',
+      ) as DuplicateCandidate['algorithmVersion'],
       createdAt: stringValue(row, 'created_at'),
     }));
+  }
+
+  resolveDuplicateCandidate(candidateId: string, resolution: ResolvedDuplicateResolution): void {
+    this.database.transaction(() => {
+      const row = this.database.connection
+        .prepare('SELECT resolution FROM duplicate_candidates WHERE id = ?')
+        .get(candidateId) as Row | undefined;
+      if (!row) throw new Error('Duplicate candidate was not found.');
+      if (stringValue(row, 'resolution') !== 'Unresolved') {
+        throw new Error('Duplicate candidate has already been resolved.');
+      }
+      this.database.connection
+        .prepare('UPDATE duplicate_candidates SET resolution = ? WHERE id = ?')
+        .run(resolution, candidateId);
+    });
   }
 
   listCustomers(): readonly CustomerListItem[] {
@@ -188,6 +209,7 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
         return {
           projectionKey,
           modality: latest.equipment.modality,
+          rawModality: latest.equipment.rawModality ?? null,
           quantity: latest.equipment.quantity,
           manufacturer: latest.equipment.manufacturer,
           model: latest.equipment.model,
@@ -203,6 +225,7 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
             : null,
           freshnessStatus: 'Unknown',
           contributingObservationIds: contributors.map((item) => item.equipment.id),
+          fieldProvenance: latest.equipment.fieldProvenance,
         };
       },
     );
@@ -227,6 +250,9 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       rawInput: nullableString(row, 'raw_input'),
       source: stringValue(row, 'sources'),
     }));
+    const duplicateReviews = this.listForCustomer(customerId).map((candidate) =>
+      this.duplicateCandidateReview(candidate),
+    );
     return {
       customer: {
         id: customer.id,
@@ -237,7 +263,10 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       },
       installedBase,
       evidence,
-      duplicateCandidates: this.listForCustomer(customerId),
+      duplicateCandidates: {
+        pending: duplicateReviews.filter((candidate) => candidate.resolution === 'Unresolved'),
+        resolved: duplicateReviews.filter((candidate) => candidate.resolution !== 'Unresolved'),
+      },
       projectionStrategy: 'latest-per-signature-v1',
     };
   }
@@ -500,5 +529,60 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
         fieldProvenance: parseJson(row.field_provenance_json),
       },
     }));
+  }
+
+  private duplicateCandidateReview(candidate: DuplicateCandidate): DuplicateCandidateReview {
+    return {
+      id: candidate.id,
+      score: candidate.score,
+      reasons: candidate.explanation,
+      relationship: candidate.relationship,
+      resolution: candidate.resolution,
+      algorithmVersion: candidate.algorithmVersion,
+      createdAt: candidate.createdAt,
+      sourceObservation: this.duplicateReviewObservation(candidate.sourceObservationId),
+      comparableObservation: this.duplicateReviewObservation(candidate.candidateObservationId),
+    };
+  }
+
+  private duplicateReviewObservation(observationId: string): DuplicateReviewObservation {
+    const row = this.database.connection
+      .prepare(
+        `SELECT eo.*, os.observed_at, os.observer_display_name, os.raw_input,
+                c.name AS facility_name, c.city AS facility_city, c.country AS facility_country,
+                COALESCE((
+                  SELECT GROUP_CONCAT(DISTINCT ei.source)
+                  FROM equipment_observation_evidence eoe
+                  JOIN evidence_items ei ON ei.id = eoe.evidence_item_id
+                  WHERE eoe.equipment_observation_id = eo.id
+                ), 'Unknown') AS sources
+         FROM equipment_observations eo
+         JOIN observation_sessions os ON os.id = eo.session_id
+         JOIN customers c ON c.id = os.customer_id
+         WHERE eo.id = ?`,
+      )
+      .get(observationId) as Row | undefined;
+    if (!row) {
+      throw new Error('Duplicate candidate references an observation that no longer exists.');
+    }
+    return {
+      id: stringValue(row, 'id'),
+      facility: {
+        name: stringValue(row, 'facility_name'),
+        city: nullableString(row, 'facility_city'),
+        country: nullableString(row, 'facility_country'),
+      },
+      modality: stringValue(row, 'modality') as Modality,
+      quantity: nullableNumber(row, 'quantity'),
+      manufacturer: nullableString(row, 'manufacturer'),
+      model: nullableString(row, 'model'),
+      approximateAge: parseJson<ApproximateAge>(row.approximate_age_json),
+      status: stringValue(row, 'status') as ObservationStatus,
+      confidence: parseJson<ConfidenceAssessment>(row.confidence_json),
+      observedAt: stringValue(row, 'observed_at'),
+      observerName: stringValue(row, 'observer_display_name'),
+      source: stringValue(row, 'sources'),
+      rawEvidence: nullableString(row, 'raw_input'),
+    };
   }
 }

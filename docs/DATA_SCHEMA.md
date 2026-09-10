@@ -138,9 +138,56 @@ The raw material. Table `evidence_items`.
 `Voice` and `Photo` are declared in the enum and the table constraint but no adapter produces
 them yet — **PLANNED**. A voice transcript belongs here as `rawText` with `source: 'Voice'`.
 
+Saving requires an explicit confirmation as well as the review state. When no follow-up remains
+the agent reads the draft back as a conversational summary, built deterministically from the draft
+by `ReviewSummaryService`, and asks whether it is correct. The observer's acceptance is recorded as
+an evidence item prefixed `confirmation:`. Correcting a field afterwards withdraws the acceptance
+and the summary is read back again, because the content the observer accepted has changed.
+
 A manual correction applied in the review step is itself evidence. Each applied correction is
 recorded as an evidence item whose id is prefixed `correction:`, so a corrected field's
 provenance points at something that exists rather than at a dangling reference.
+
+A correction is a partial update. Only the fields the observer actually changed are sent, and a
+field they did not touch is never cleared, re-derived, or rewritten — a qualitative age survives a
+facility-name correction untouched.
+
+Evidence ids accumulate, they never get replaced. When a field's value changes — through a later
+message, a follow-up answer, or a review correction — the new evidence id is added to the ids
+already on that field. The message that made the first claim is still reachable from the field
+that now holds the second one.
+
+### Contradictions inside one capture
+
+Two incompatible claims about the same field, both of them things the observer said in the same
+session, are a contradiction. It is a different thing from `DuplicateCandidate`, which compares
+observations across saved sessions, and the two never interact.
+
+How a second value is treated depends on the state the field was in and on the observer's own
+wording, never on the values themselves:
+
+| Earlier state                | Later value | Treated as      | Result                                             |
+| ---------------------------- | ----------- | --------------- | -------------------------------------------------- |
+| `Missing`                    | a value     | enrichment      | the value is taken                                 |
+| `DeclaredUnknown`            | a value     | enrichment      | the value is taken, the earlier evidence id stays  |
+| `Known`, same value          | same value  | corroboration   | unchanged, the evidence id is added                |
+| `Known`, explicit correction | different   | self-correction | the later value is taken with its stated certainty |
+| `Known`, anything else       | different   | contradiction   | later value active but `Uncertain`, and it asks    |
+
+A self-correction is recognised only from unambiguous wording such as "en realidad", "perdón",
+"me equivoqué", "actually" or "I meant", and hedged wording such as "quizá" or "creo que" always
+wins over it. Nothing infers which value is right from the values.
+
+An unresolved contradiction produces a `Required` follow-up that names both claims and asks which
+to keep. Until it is answered the capture stays in `NEEDS_FOLLOW_UP`, review cannot be reached,
+and any confirmation already given is withdrawn — a contradiction can never be buried under "yes,
+that is correct". Answering it with either claim restores `Explicit` certainty; declining with a
+declared-unknown reply leaves the field `DeclaredUnknown`.
+
+Nothing about a contradiction is persisted as its own record, and no migration was needed. The
+disagreement lives on the draft while it is open; what survives into the database is the field's
+accumulated `evidenceIds` and the append-only evidence rows, which together answer what was said
+first, what was said after, and which value was accepted.
 
 ### EquipmentObservation
 
@@ -159,10 +206,35 @@ One group of equipment reported in one session. Table `equipment_observations`.
 | `approximateAge`       | yes                | inferred    | the union above                                                 |
 | `installationEstimate` | yes                | **derived** | from age plus `observedAt`                                      |
 | `confidence`           | yes                | derived     | `ConfidenceAssessment`                                          |
-| `status`               | yes                | derived     | `Confirmed`, `Reported`, `Estimated`, `Unknown`                 |
+| `status`               | yes                | derived     | `Confirmed`, `Reported`, `Estimated`, `Unknown`, see below      |
 | `notes`                | nullable           | observed    |                                                                 |
 | `evidenceIds`          | yes                |             | which evidence supports this group                              |
 | `fieldProvenance`      | yes                |             | per-field knowledge state, origin, certainty, evidence ids      |
+
+#### Observation status
+
+Status answers **how the observer came to know this**, and nothing else. It is not a confidence
+level and it is not a field certainty. All three can disagree, and that is correct: "I saw an MR
+that looked about seven years old" is `Confirmed` with an `Uncertain` age, and "they told me it
+is exactly seven years old" is `Reported` with an `Explicit` age.
+
+| Value       | Meaning                                                            |
+| ----------- | ------------------------------------------------------------------ |
+| `Confirmed` | The observer states they saw the equipment themselves              |
+| `Reported`  | The observer is relaying what another person or source told them   |
+| `Estimated` | The observer presents the account as their own estimate            |
+| `Unknown`   | The source could not be established, including a declined question |
+
+It is decided by `deriveObservationStatus` in `src/domain/rules/observation-basis.ts` from the
+session's `observationBasis`, which is set either by an unambiguous statement in the observer's
+own words or by their answer to the `Preferred` follow-up question "Did you observe this equipment
+directly, was it reported to you by someone else, or is it an estimate?". When the basis was never
+established, and only then, status falls back to the older age-derived rule, which is what every
+record written before this existed relied on. Declining the question stores `Unknown`; it never
+produces `Confirmed`.
+
+The 20 official records are a transcription, not a capture. They carry the workbook's own
+`Status` column, 13 `Reported` and 7 `Estimated`, and this rule does not touch them.
 
 #### Modality vocabulary
 
@@ -207,6 +279,21 @@ Not a bare number. `src/domain/model/confidence.ts`.
 
 A score with no explanation is not acceptable output. The reason codes are what let a reviewer
 disagree with the number.
+
+**Provenance is surfaced, not only stored.** `InstalledBaseItem`, the projection returned by
+`getCustomer360`, carries `rawModality` and `fieldProvenance` alongside `confidence` — nothing new
+is persisted and no IPC contract changes; the repository's mapping into the view was simply
+extended to include data that already existed per equipment row. The Customer 360 card in
+`App.tsx` renders the confidence level with its reason codes translated to human labels, the
+status with a fixed one-line explanation of what that status means (never recomputed from the
+record), and an expandable "Field details" section listing each field's knowledge state
+(`Known` / `Declared unknown` / `Not mentioned`), its origin and its certainty (`Explicit`,
+`Uncertain`, `Unknown`, or "Not supplied" for a `null` certainty). A field whose evidence includes
+a `correction:`-prefixed id is marked `Corrected`, reading the same evidence trail corrections
+already write rather than adding a new history mechanism. `rawModality` is shown as "Captured as"
+only when it differs from the normalized `modality`; official-seed rows, where both are identical,
+show nothing extra. A record with no per-field provenance at all — for example a historical row —
+degrades to an empty details section rather than failing.
 
 ### DuplicateCandidate
 
@@ -276,6 +363,21 @@ corroboration rather than duplication.
 **Records are never merged automatically.** A candidate is a review item with a
 `resolution` that a human sets. Merging on a low-certainty score would destroy the audit trail
 that the append-only design exists to protect.
+
+`DuplicateCandidate` records the newly saved `sourceObservationId`, the already-persisted
+`candidateObservationId`, the score, relationship, coded reasons, `duplicate-v1` algorithm version,
+creation time and resolution. `candidateInstalledBaseId` is nullable and is not used by the current
+review flow. The Customer 360 review view joins each observation back to its equipment row,
+session, customer and evidence, so the person sees the two records and their source text rather than
+bare ids or JSON.
+
+The resolution lifecycle is deliberately small. A detector-created candidate starts as
+`Unresolved` and therefore counts as pending. A person must explicitly record exactly one of
+`NotDuplicate`, `SameEquipment` or `CorroboratingEvidence`. The choice updates only the candidate's
+`resolution` column; it moves the item to resolved history and survives application restarts. It
+does not delete, merge or update either equipment observation, its evidence, quantity, status,
+confidence or installed-base projection. An already-resolved candidate is not offered for a second
+decision.
 
 **What would make this better — PROPOSED, not implemented:**
 

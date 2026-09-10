@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type {
+  CaptureSessionView,
   Clock,
   IdGenerator,
   InferenceRuntimeInfo,
   ObservationExtractionPort,
 } from '@/application';
 import { CaptureWorkflowService, ObservationExtractionSchema } from '@/application';
+import type { CaptureEquipmentDraft, DraftField } from '@/domain';
+import { OBSERVATION_BASIS_QUESTION_KEY } from '@/domain';
 import {
   applyDevelopmentSeed,
   DevelopmentMockObservationExtractionService,
@@ -117,6 +120,7 @@ describe('CaptureWorkflowService', () => {
       expect(captured.draft.equipment[0]?.rawModality).toBe('resonador magnético');
 
       service.proceedToReview(started.id);
+      service.confirmReview(started.id);
       const saved = service.save(started.id);
       const row = database.connection
         .prepare(
@@ -171,6 +175,7 @@ describe('CaptureWorkflowService', () => {
       );
 
       service.proceedToReview(started.id);
+      service.confirmReview(started.id);
       service.save(started.id);
       const row = database.connection
         .prepare(
@@ -216,6 +221,7 @@ describe('CaptureWorkflowService', () => {
         );
 
         service.proceedToReview(started.id);
+        service.confirmReview(started.id);
         service.save(started.id);
         const row = database.connection
           .prepare(`SELECT modality, raw_modality FROM equipment_observations WHERE session_id = ?`)
@@ -237,6 +243,7 @@ describe('CaptureWorkflowService', () => {
       const started = service.start();
       await service.submitMessage(started.id, 'Test evidence.');
       service.proceedToReview(started.id);
+      service.confirmReview(started.id);
       service.save(started.id);
       const row = database.connection
         .prepare('SELECT confidence_json FROM equipment_observations WHERE session_id = ?')
@@ -277,6 +284,7 @@ describe('CaptureWorkflowService', () => {
       expect(unknown.pendingQuestion?.field).toBe('ApproximateAge');
 
       const review = service.proceedToReview(started.id);
+      service.confirmReview(started.id);
       expect(review.draft.state).toBe('READY_FOR_REVIEW');
       const saved = service.save(started.id);
       expect(saved.capture.draft.state).toBe('SAVED');
@@ -361,6 +369,8 @@ describe('CaptureWorkflowService', () => {
       result = await service.submitMessage(sessionId, '8');
       result = await service.submitMessage(sessionId, 'no sé');
       result = await service.submitMessage(sessionId, '8');
+      expect(result.pendingQuestion?.field).toBe('ObservationBasis');
+      result = await service.submitMessage(sessionId, 'los vi directamente');
       expect(result.pendingQuestion?.field).toBe('Model');
       expect(result.pendingQuestion?.target.type).toBe('Equipment');
       const targetId =
@@ -419,6 +429,7 @@ describe('CaptureWorkflowService modality correction', () => {
       );
 
       service.proceedToReview(started.id);
+      service.confirmReview(started.id);
       const saved = service.save(started.id);
       const view = repository.getCustomer360(saved.customerId, '2026-09-08T12:00:00Z');
       expect(view?.installedBase.some((item) => item.modality === 'Image Guided Therapy')).toBe(
@@ -661,6 +672,7 @@ describe('CaptureWorkflowService correction preserves existing ages (P3-S2)', ()
         equipment: [{ id: groupId, manufacturer: 'Orion Imaging' }],
       });
       service.proceedToReview(sessionId);
+      service.confirmReview(sessionId);
       const saved = service.save(sessionId);
 
       const row = database.connection
@@ -676,6 +688,606 @@ describe('CaptureWorkflowService correction preserves existing ages (P3-S2)', ()
         type: 'qualitative',
         label: 'bastante nuevo',
       });
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('CaptureWorkflowService observation status (P3-S3)', () => {
+  const captureAndSave = async (
+    text: string,
+  ): Promise<{ status: string; certainty: string | null }> => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, text);
+      service.proceedToReview(started.id);
+      service.confirmReview(started.id);
+      service.save(started.id);
+      const row = database.connection
+        .prepare(
+          'SELECT status, field_provenance_json FROM equipment_observations WHERE session_id = ?',
+        )
+        .get(started.id) as { status: string; field_provenance_json: string };
+      const provenance = JSON.parse(row.field_provenance_json) as {
+        approximateAge: { certainty: string | null };
+      };
+      return { status: row.status, certainty: provenance.approximateAge.certainty };
+    } finally {
+      database.close();
+    }
+  };
+
+  it('records a directly observed capture as Confirmed', async () => {
+    const result = await captureAndSave(
+      'Estoy en el Hospital DemoCare Pacific en Panama. Vi directamente dos MR de NovaMed.',
+    );
+    expect(result.status).toBe('Confirmed');
+  });
+
+  it('records information relayed by someone else as Reported', async () => {
+    const result = await captureAndSave(
+      'Estoy en el Hospital DemoCare Pacific en Panama. El tecnico me dijo que tienen dos MR.',
+    );
+    expect(result.status).toBe('Reported');
+  });
+
+  it('records an openly estimated account as Estimated', async () => {
+    const result = await captureAndSave(
+      'Estoy en el Hospital DemoCare Pacific en Panama. Creo que tienen dos MR.',
+    );
+    expect(result.status).toBe('Estimated');
+  });
+
+  it('keeps a directly observed capture Confirmed even when the age is uncertain', async () => {
+    const result = await captureAndSave(
+      'Estoy en el Hospital DemoCare Pacific en Panama. Vi directamente dos MR de unos ocho anos.',
+    );
+    expect(result.status).toBe('Confirmed');
+    expect(result.certainty).toBe('Uncertain');
+  });
+
+  it('keeps a reported capture Reported even when the age is stated exactly', async () => {
+    const result = await captureAndSave(
+      'Estoy en el Hospital DemoCare Pacific en Panama. Me dijeron que tienen dos MR de 8 anos.',
+    );
+    expect(result.status).toBe('Reported');
+    expect(result.certainty).toBe('Explicit');
+  });
+
+  it('asks how the equipment was observed when the capture does not say', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      await service.submitMessage(
+        started.id,
+        'Estoy en el Hospital DemoCare Pacific en Panama. Tienen dos MR.',
+      );
+      const afterManufacturer = await service.submitMessage(started.id, 'no lo se');
+      expect(afterManufacturer.pendingQuestion?.field).toBe('ApproximateAge');
+      const afterAge = await service.submitMessage(started.id, 'no lo se');
+
+      expect(afterAge.pendingQuestion?.key).toBe(OBSERVATION_BASIS_QUESTION_KEY);
+      expect(afterAge.pendingQuestion?.priority).toBe('Preferred');
+      expect(afterAge.draft.observationBasis.state).toBe('Missing');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('accepts a declined provenance question as Unknown and never fabricates Confirmed', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      await service.submitMessage(
+        started.id,
+        'Estoy en el Hospital DemoCare Pacific en Panama. Tienen dos MR.',
+      );
+      await service.submitMessage(started.id, 'no lo se');
+      const afterAge = await service.submitMessage(started.id, 'no lo se');
+      expect(afterAge.pendingQuestion?.key).toBe(OBSERVATION_BASIS_QUESTION_KEY);
+
+      const declined = await service.submitMessage(started.id, 'no lo se');
+
+      expect(declined.draft.observationBasis.state).toBe('DeclaredUnknown');
+      expect(declined.pendingQuestion?.key).not.toBe(OBSERVATION_BASIS_QUESTION_KEY);
+      expect(declined.draft.observationBasis).not.toEqual(
+        expect.objectContaining({ state: 'Known' }),
+      );
+
+      service.proceedToReview(started.id);
+      service.confirmReview(started.id);
+      service.save(started.id);
+      const row = database.connection
+        .prepare('SELECT status FROM equipment_observations WHERE session_id = ?')
+        .get(started.id) as { status: string };
+      expect(row.status).toBe('Unknown');
+      expect(row.status).not.toBe('Confirmed');
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('CaptureWorkflowService review confirmation (P3-S3)', () => {
+  const readyCapture = async (): Promise<{
+    database: ReturnType<typeof createHarness>['database'];
+    repository: ReturnType<typeof createHarness>['repository'];
+    service: CaptureWorkflowService;
+    sessionId: string;
+  }> => {
+    const { database, repository, service } = createHarness();
+    const started = service.start();
+    await service.submitMessage(
+      started.id,
+      'Vi directamente dos MR de NovaMed en el Hospital DemoCare Pacific en Panama.',
+    );
+    return { database, repository, service, sessionId: started.id };
+  };
+
+  it('reads the draft back and asks for confirmation when no follow-up remains', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      const review = service.proceedToReview(sessionId);
+
+      const summary = review.messages.at(-1);
+      expect(summary?.role).toBe('Assistant');
+      expect(summary?.content).toContain('Is that correct?');
+      expect(summary?.content).toContain('MR');
+      expect(review.reviewConfirmed).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not treat reaching review as a confirmation', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      const review = service.proceedToReview(sessionId);
+
+      expect(review.draft.state).toBe('READY_FOR_REVIEW');
+      expect(review.reviewConfirmed).toBe(false);
+      expect(() => service.save(sessionId)).toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('persists the observation once the observer confirms in the conversation', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      service.proceedToReview(sessionId);
+
+      const confirmed = await service.submitMessage(sessionId, 'si, es correcto');
+
+      expect(confirmed.reviewConfirmed).toBe(true);
+      expect(confirmed.draft.state).toBe('READY_FOR_REVIEW');
+      expect(() => service.save(sessionId)).not.toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('persists the observation once the observer confirms through the explicit action', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      service.proceedToReview(sessionId);
+
+      const confirmed = service.confirmReview(sessionId);
+
+      expect(confirmed.reviewConfirmed).toBe(true);
+      expect(() => service.save(sessionId)).not.toThrow();
+
+      const confirmationEvidence = database.connection
+        .prepare("SELECT COUNT(*) AS count FROM evidence_items WHERE id LIKE 'confirmation:%'")
+        .get() as { count: number };
+      expect(confirmationEvidence.count).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('leaves the draft unconfirmed when the observer rejects the summary', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      service.proceedToReview(sessionId);
+
+      const rejected = await service.submitMessage(sessionId, 'no');
+
+      expect(rejected.reviewConfirmed).toBe(false);
+      expect(() => service.save(sessionId)).toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('withdraws a confirmation when the observer then corrects a field', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      const review = service.proceedToReview(sessionId);
+      service.confirmReview(sessionId);
+      const groupId = String(review.draft.equipment[0]?.id);
+
+      const corrected = service.correct(sessionId, {
+        equipment: [{ id: groupId, manufacturer: 'Orion Imaging' }],
+      });
+      expect(corrected.draft.equipment[0]?.manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Orion Imaging' }),
+      );
+      expect(corrected.reviewConfirmed).toBe(false);
+      expect(() => service.save(sessionId)).toThrow();
+
+      const rereview = service.proceedToReview(sessionId);
+      expect(rereview.messages.at(-1)?.content).toContain('Orion Imaging');
+      expect(rereview.reviewConfirmed).toBe(false);
+
+      service.confirmReview(sessionId);
+      expect(() => service.save(sessionId)).not.toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('marks an uncertain field as uncertain in the summary it reads back', async () => {
+    const { database, service } = createHarness(
+      fixedExtractor(
+        extraction({
+          modality: 'MR',
+          manufacturer: 'NovaMed',
+          approximateAge: { type: 'estimate', minYears: 7, maxYears: 7 },
+          certainty: 'Uncertain',
+        }),
+      ),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Test evidence.');
+      const review = service.proceedToReview(started.id);
+      expect(review.messages.at(-1)?.content).toContain('uncertain');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('treats a spoken correction as a correction rather than a confirmation', async () => {
+    const { database, service, sessionId } = await readyCapture();
+    try {
+      service.proceedToReview(sessionId);
+      const result = await service.submitMessage(sessionId, 'en realidad eran tres MR');
+      expect(result.reviewConfirmed).toBe(false);
+      expect(result.draft.equipment[0]?.quantity).toEqual(
+        expect.objectContaining({ state: 'Known', value: 3 }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('CaptureWorkflowService contradictions inside one capture (P3-S6)', () => {
+  /** Feeds one extraction per message, so a disagreement can be staged deterministically. */
+  const sequenceExtractor = (values: readonly unknown[]): ObservationExtractionPort => {
+    const parsed = values.map((value) => ObservationExtractionSchema.parse(value));
+    const runtime: InferenceRuntimeInfo = {
+      engine: 'Development Mock',
+      execution: 'Development only',
+      model: 'Sequenced test extraction',
+      networkRequiredForInference: false,
+      status: 'ready',
+      detail: 'Test double.',
+      progressPercent: 100,
+    };
+    let index = 0;
+    return {
+      kind: 'development-mock',
+      initialize: async () => runtime,
+      getRuntimeInfo: () => runtime,
+      extract: async () => {
+        const value = parsed[Math.min(index, parsed.length - 1)];
+        index += 1;
+        if (!value) throw new Error('The test extractor ran out of extractions.');
+        return value;
+      },
+      dispose: async () => undefined,
+    };
+  };
+
+  const group = (capture: CaptureSessionView): CaptureEquipmentDraft => {
+    const item = capture.draft.equipment[0];
+    if (!item) throw new Error('The draft has no equipment group.');
+    return item;
+  };
+
+  const lastUserEvidence = (capture: CaptureSessionView): string =>
+    String(capture.messages.filter((item) => item.role === 'User').at(-1)?.id);
+
+  const evidenceOf = (field: DraftField<unknown>): readonly string[] =>
+    field.state === 'Missing' ? [] : field.evidenceIds;
+
+  it('keeps both manufacturers traceable and asks which to keep when nothing says which is right', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      const first = await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
+      const firstEvidence = lastUserEvidence(first);
+      const second = await service.submitMessage(started.id, 'Bueno, quiza era Orion Imaging.');
+      const secondEvidence = lastUserEvidence(second);
+
+      expect(group(second).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Orion Imaging', certainty: 'Uncertain' }),
+      );
+      expect(evidenceOf(group(second).manufacturer)).toEqual(
+        expect.arrayContaining([firstEvidence, secondEvidence]),
+      );
+      expect(group(second).contradictions).toEqual([
+        {
+          field: 'Manufacturer',
+          previousText: 'NovaMed',
+          previousEvidenceIds: [firstEvidence],
+          currentText: 'Orion Imaging',
+          currentEvidenceIds: [secondEvidence],
+        },
+      ]);
+      expect(second.pendingQuestion?.priority).toBe('Required');
+      expect(second.pendingQuestion?.text).toContain('NovaMed');
+      expect(second.pendingQuestion?.text).toContain('Orion Imaging');
+      expect(second.draft.state).toBe('NEEDS_FOLLOW_UP');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps both quantities traceable when a later count disagrees with the first', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', quantity: 2, certainty: 'Explicit' }),
+        extraction({ modality: 'MR', quantity: 3, certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      const first = await service.submitMessage(started.id, 'Vi dos equipos MR.');
+      const firstEvidence = lastUserEvidence(first);
+      const second = await service.submitMessage(started.id, 'Creo que eran tres.');
+      const secondEvidence = lastUserEvidence(second);
+
+      expect(group(second).quantity).toEqual(
+        expect.objectContaining({ state: 'Known', value: 3, certainty: 'Uncertain' }),
+      );
+      expect(evidenceOf(group(second).quantity)).toEqual(
+        expect.arrayContaining([firstEvidence, secondEvidence]),
+      );
+      expect(group(second).contradictions[0]).toEqual(
+        expect.objectContaining({ field: 'Quantity', previousText: '2', currentText: '3' }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not raise a contradiction when a later message fills a field that was missing', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: null, certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Vi dos equipos MR.');
+      const second = await service.submitMessage(started.id, 'Son de NovaMed.');
+
+      expect(group(second).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      expect(group(second).contradictions).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('treats a value that follows a declared unknown as enrichment and keeps the earlier evidence', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: null, certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Vi dos equipos MR.');
+      const declined = await service.submitMessage(started.id, 'no lo se');
+      expect(group(declined).manufacturer.state).toBe('DeclaredUnknown');
+      const unknownEvidence = lastUserEvidence(declined);
+
+      const later = await service.submitMessage(started.id, 'Ahora si, son de NovaMed.');
+
+      expect(group(later).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      expect(evidenceOf(group(later).manufacturer)).toContain(unknownEvidence);
+      expect(group(later).contradictions).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('accepts an explicit self-correction without asking, and still keeps the earlier evidence', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', quantity: 3, certainty: 'Explicit' }),
+        extraction({ modality: 'MR', quantity: 2, certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      const first = await service.submitMessage(started.id, 'Vi tres equipos MR.');
+      const firstEvidence = lastUserEvidence(first);
+
+      const corrected = await service.submitMessage(
+        started.id,
+        'Primero pense que eran tres, pero en realidad habia dos.',
+      );
+
+      expect(group(corrected).quantity).toEqual(
+        expect.objectContaining({ state: 'Known', value: 2, certainty: 'Explicit' }),
+      );
+      expect(evidenceOf(group(corrected).quantity)).toContain(firstEvidence);
+      expect(group(corrected).contradictions).toEqual([]);
+      expect(corrected.pendingQuestion?.text ?? '').not.toContain('Which one should I keep');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('resolves the field to the answered value with an explicit certainty', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
+      const contradicted = await service.submitMessage(started.id, 'Quiza era Orion Imaging.');
+      expect(contradicted.draft.state).toBe('NEEDS_FOLLOW_UP');
+      expect(() => service.proceedToReview(started.id)).toThrow(/contradictory/i);
+
+      const resolved = await service.submitMessage(started.id, 'NovaMed');
+
+      expect(group(resolved).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      expect(group(resolved).contradictions).toEqual([]);
+      expect(resolved.pendingQuestion?.text ?? '').not.toContain('Which one should I keep');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not let a confirmation settle a contradiction raised after it', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
+      service.proceedToReview(started.id);
+      expect(service.confirmReview(started.id).reviewConfirmed).toBe(true);
+
+      const contradicted = await service.submitMessage(started.id, 'Quiza era Orion Imaging.');
+
+      expect(contradicted.reviewConfirmed).toBe(false);
+      expect(contradicted.draft.state).toBe('NEEDS_FOLLOW_UP');
+      expect(group(contradicted).contradictions).toHaveLength(1);
+      expect(() => service.save(started.id)).toThrow();
+      expect(() => service.confirmReview(started.id)).toThrow();
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps a corrected modality traceable to the earlier claim and preserves the raw wording', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([extraction({ modality: 'MR', rawModality: 'resonadores' })]),
+    );
+    try {
+      const started = service.start();
+      const first = await service.submitMessage(started.id, 'Me dijeron que eran dos resonadores.');
+      const firstEvidence = lastUserEvidence(first);
+
+      const corrected = service.correct(started.id, {
+        equipment: [{ id: group(first).id, modality: 'CT' }],
+      });
+
+      expect(group(corrected).modality).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'CT' }),
+      );
+      expect(evidenceOf(group(corrected).modality)).toEqual(
+        expect.arrayContaining([firstEvidence]),
+      );
+      expect(group(corrected).rawModality).toBe('resonadores');
+      expect(corrected.reviewConfirmed).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('keeps both claims traceable through save, reload and Customer 360', async () => {
+    const { database, repository, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      const first = await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
+      const firstEvidence = lastUserEvidence(first);
+      const second = await service.submitMessage(started.id, 'Quiza era Orion Imaging.');
+      const secondEvidence = lastUserEvidence(second);
+      const answered = await service.submitMessage(started.id, 'Orion Imaging');
+      expect(group(answered).contradictions).toEqual([]);
+
+      service.proceedToReview(started.id);
+      service.confirmReview(started.id);
+      const saved = service.save(started.id);
+
+      const row = database.connection
+        .prepare('SELECT field_provenance_json FROM equipment_observations WHERE session_id = ?')
+        .get(started.id) as { field_provenance_json: string };
+      const provenance = JSON.parse(row.field_provenance_json) as {
+        manufacturer: { evidenceIds: string[] };
+      };
+      expect(provenance.manufacturer.evidenceIds).toEqual(
+        expect.arrayContaining([firstEvidence, secondEvidence]),
+      );
+
+      const view = repository.getCustomer360(saved.customerId, '2026-09-08T12:00:00Z');
+      const rawText = (view?.evidence ?? []).map((item) => item.rawInput ?? '').join(' ');
+      expect(rawText).toContain('NovaMed');
+      expect(rawText).toContain('Orion Imaging');
+      expect(view?.installedBase.length ?? 0).toBeGreaterThan(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('never turns a contradiction into a duplicate candidate', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([
+        extraction({ modality: 'MR', manufacturer: 'NovaMed', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+        extraction({ modality: 'MR', manufacturer: 'Orion Imaging', certainty: 'Explicit' }),
+      ]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
+      await service.submitMessage(started.id, 'Quiza era Orion Imaging.');
+      await service.submitMessage(started.id, 'Orion Imaging');
+      service.proceedToReview(started.id);
+      service.confirmReview(started.id);
+      service.save(started.id);
+
+      const candidates = database.connection
+        .prepare(
+          'SELECT COUNT(*) AS count FROM duplicate_candidates WHERE source_observation_id IN (SELECT id FROM equipment_observations WHERE session_id = ?)',
+        )
+        .get(started.id) as { count: number };
+      expect(candidates.count).toBe(0);
     } finally {
       database.close();
     }

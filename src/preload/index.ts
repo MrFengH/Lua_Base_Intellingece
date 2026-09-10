@@ -11,9 +11,12 @@ const api: InstalledBaseApi = {
   correctCapture: (captureId, correction) =>
     ipcRenderer.invoke(IPC_CHANNELS.captureCorrect, { captureId, correction }),
   proceedToReview: (captureId) => ipcRenderer.invoke(IPC_CHANNELS.captureReview, { captureId }),
+  confirmReview: (captureId) => ipcRenderer.invoke(IPC_CHANNELS.captureConfirm, { captureId }),
   saveCapture: (captureId) => ipcRenderer.invoke(IPC_CHANNELS.captureSave, { captureId }),
   listCustomers: () => ipcRenderer.invoke(IPC_CHANNELS.customersList),
   getCustomer360: (customerId) => ipcRenderer.invoke(IPC_CHANNELS.customer360, { customerId }),
+  resolveDuplicateCandidate: (candidateId, resolution) =>
+    ipcRenderer.invoke(IPC_CHANNELS.duplicateResolve, { candidateId, resolution }),
   getDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboard),
 };
 

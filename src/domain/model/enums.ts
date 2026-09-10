@@ -46,6 +46,13 @@ export const DUPLICATE_RESOLUTIONS = [
 ] as const;
 export type DuplicateResolution = (typeof DUPLICATE_RESOLUTIONS)[number];
 
+export const RESOLVED_DUPLICATE_RESOLUTIONS = [
+  'NotDuplicate',
+  'SameEquipment',
+  'CorroboratingEvidence',
+] as const satisfies readonly DuplicateResolution[];
+export type ResolvedDuplicateResolution = (typeof RESOLVED_DUPLICATE_RESOLUTIONS)[number];
+
 export const EVIDENCE_RELATIONSHIPS = [
   'NoMatch',
   'PossibleDuplicate',
@@ -54,3 +61,10 @@ export const EVIDENCE_RELATIONSHIPS = [
   'PossibleConflict',
 ] as const;
 export type EvidenceRelationship = (typeof EVIDENCE_RELATIONSHIPS)[number];
+
+/**
+ * How the observer came to know what they are reporting. It is the provenance of the account,
+ * not the precision of any field: a directly observed system may still have an uncertain age.
+ */
+export const OBSERVATION_BASES = ['DirectObservation', 'ReportedByOther', 'Estimate'] as const;
+export type ObservationBasis = (typeof OBSERVATION_BASES)[number];

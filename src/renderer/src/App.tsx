@@ -5,12 +5,28 @@ import type {
   Customer360View,
   CustomerListItem,
   DashboardView,
+  DuplicateCandidateReview,
+  DuplicateReviewObservation,
   InferenceRuntimeInfo,
   InstalledBaseItem,
   ObservationEvidenceView,
 } from '@/application/contracts';
 import { MODALITIES } from '@/domain/model';
-import type { ApproximateAge, DraftField, InstallationEstimate } from '@/domain';
+import { contradictionFieldLabel } from '@/domain/rules';
+import type {
+  ApproximateAge,
+  ConfidenceAssessment,
+  ConfidenceReasonCode,
+  DraftField,
+  DuplicateReasonCode,
+  DuplicateResolution,
+  EvidenceRelationship,
+  FactCertainty,
+  InstallationEstimate,
+  KnowledgeState,
+  ObservationStatus,
+  ResolvedDuplicateResolution,
+} from '@/domain';
 import type { IpcResult } from '@/shared';
 
 type Page = 'capture' | 'customers' | 'dashboard';
@@ -32,6 +48,104 @@ const ageText = (age: ApproximateAge): string => {
   if (age.minYears === age.maxYears) return `~${age.minYears} years`;
   return `${age.minYears}–${age.maxYears} years`;
 };
+
+/** Answers "how did the observer come to know this", per docs/DATA_SCHEMA.md. Fixed text per
+ * status value, not derived from any one record, so it never re-infers status in the renderer. */
+const STATUS_EXPLANATIONS: Record<ObservationStatus, string> = {
+  Confirmed: 'Observer stated they saw the equipment directly.',
+  Reported: 'Information was relayed from another person or source.',
+  Estimated: 'Observer presented the account as an estimate.',
+  Unknown: 'Observation source could not be established.',
+};
+
+/** Human labels for the coded confidence reasons already produced by
+ * SimpleConfidenceScoringService. The reason code stays in the stored data; only the label is
+ * presentational. */
+const CONFIDENCE_REASON_LABELS: Record<ConfidenceReasonCode, string> = {
+  NO_KNOWN_FACTS: 'No fields have a known value yet',
+  EXPLICIT_FACTS: 'Some fields were explicitly stated',
+  UNCERTAINTY_LANGUAGE: 'Some fields were uncertain',
+  DERIVED_FACTS: 'Some fields were derived rather than reported',
+  INCOMPLETE_FIELDS: 'Some fields are still incomplete',
+};
+
+const DUPLICATE_RELATIONSHIP_LABELS: Record<EvidenceRelationship, string> = {
+  NoMatch: 'No match',
+  PossibleDuplicate: 'Possible duplicate',
+  PossibleCorroboration: 'Possible corroboration',
+  PartialMatch: 'Partial match',
+  PossibleConflict: 'Possible conflict',
+};
+
+const DUPLICATE_REASON_LABELS: Partial<Record<DuplicateReasonCode, string>> = {
+  DIFFERENT_CUSTOMER: 'Different facility',
+  SAME_CUSTOMER: 'Same facility',
+  UNKNOWN_MODALITY: 'Modality is unknown',
+  DIFFERENT_MODALITY: 'Different modality',
+  SAME_MODALITY: 'Same modality',
+  SAME_MANUFACTURER: 'Same manufacturer',
+  DIFFERENT_MANUFACTURER: 'Different manufacturer',
+  SAME_MODEL: 'Same model',
+  DIFFERENT_MODEL: 'Different model',
+  COMPATIBLE_AGE: 'Compatible approximate age',
+  INCOMPATIBLE_AGE: 'Incompatible approximate age',
+  INDEPENDENT_OBSERVER: 'Reported by a different observer',
+  INDEPENDENT_VISIT: 'Reported during a different visit',
+};
+
+const DUPLICATE_RESOLUTION_LABELS: Record<DuplicateResolution, string> = {
+  Unresolved: 'Pending review',
+  NotDuplicate: 'Not duplicate',
+  SameEquipment: 'Same equipment',
+  CorroboratingEvidence: 'Corroborating evidence',
+};
+
+const DUPLICATE_RESOLUTION_OPTIONS: ReadonlyArray<{
+  value: ResolvedDuplicateResolution;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'NotDuplicate',
+    label: 'Not duplicate',
+    description: 'These observations do not refer to the same equipment.',
+  },
+  {
+    value: 'SameEquipment',
+    label: 'Same equipment',
+    description: 'They refer to the same equipment; both evidence records remain intact.',
+  },
+  {
+    value: 'CorroboratingEvidence',
+    label: 'Corroborating evidence',
+    description: 'The new observation independently supports the existing record.',
+  },
+];
+
+const FIELD_LABELS: Record<string, string> = {
+  modality: 'Modality',
+  quantity: 'Quantity',
+  manufacturer: 'Manufacturer',
+  model: 'Model',
+  approximateAge: 'Approx. age',
+  notes: 'Notes',
+};
+
+const KNOWLEDGE_STATE_LABELS: Record<KnowledgeState, string> = {
+  Known: 'Known',
+  DeclaredUnknown: 'Declared unknown',
+  Missing: 'Not mentioned',
+};
+
+/** `null` means the extractor supplied no certainty at all, which must read differently from an
+ * explicit `Unknown` classification — neither is promoted to `Explicit`. */
+const certaintyText = (certainty: FactCertainty | null): string =>
+  certainty === null ? 'Not supplied' : certainty;
+
+/** A corrected field's evidence includes the `correction:` id the workflow service records when a
+ * review edit is applied, so this reads existing provenance rather than inventing a history. */
+const wasCorrected = (evidenceIds: readonly string[]): boolean =>
+  evidenceIds.some((id) => id.startsWith('correction:'));
 
 const installationText = (installation: InstallationEstimate): string => {
   if (installation.type === 'unknown') return 'Unknown';
@@ -84,6 +198,201 @@ const equipmentLabelsById = (installedBase: readonly InstalledBaseItem[]): Map<s
     item.contributingObservationIds.forEach((id) => labels.set(id, label));
   });
   return labels;
+};
+
+const facilityText = (observation: DuplicateReviewObservation): string =>
+  [observation.facility.name, observation.facility.city, observation.facility.country]
+    .filter(Boolean)
+    .join(' · ');
+
+const confidenceText = (confidence: ConfidenceAssessment): string =>
+  confidence.score === null
+    ? confidence.level
+    : `${confidence.level} (${confidence.score.toFixed(2)})`;
+
+interface DuplicateComparisonRow {
+  label: string;
+  source: string;
+  comparable: string;
+}
+
+const duplicateComparisonRows = (
+  candidate: DuplicateCandidateReview,
+): readonly DuplicateComparisonRow[] => {
+  const source = candidate.sourceObservation;
+  const comparable = candidate.comparableObservation;
+  return [
+    { label: 'Facility', source: facilityText(source), comparable: facilityText(comparable) },
+    { label: 'Modality', source: source.modality, comparable: comparable.modality },
+    {
+      label: 'Quantity',
+      source: source.quantity === null ? 'Unknown' : String(source.quantity),
+      comparable: comparable.quantity === null ? 'Unknown' : String(comparable.quantity),
+    },
+    {
+      label: 'Manufacturer',
+      source: source.manufacturer ?? 'Unknown',
+      comparable: comparable.manufacturer ?? 'Unknown',
+    },
+    {
+      label: 'Model',
+      source: source.model ?? 'Unknown',
+      comparable: comparable.model ?? 'Unknown',
+    },
+    {
+      label: 'Approx. age',
+      source: ageText(source.approximateAge),
+      comparable: ageText(comparable.approximateAge),
+    },
+    { label: 'Status', source: source.status, comparable: comparable.status },
+    {
+      label: 'Confidence',
+      source: confidenceText(source.confidence),
+      comparable: confidenceText(comparable.confidence),
+    },
+    {
+      label: 'Observed / source',
+      source: `${new Date(source.observedAt).toLocaleDateString()} · ${source.source}`,
+      comparable: `${new Date(comparable.observedAt).toLocaleDateString()} · ${comparable.source}`,
+    },
+  ];
+};
+
+const DuplicateReviewPanel = ({
+  candidate,
+  candidatePosition,
+  candidateCount,
+  selectedResolution,
+  busy,
+  previous,
+  next,
+  chooseResolution,
+  resolve,
+}: {
+  candidate: DuplicateCandidateReview;
+  candidatePosition: number;
+  candidateCount: number;
+  selectedResolution: ResolvedDuplicateResolution | null;
+  busy: boolean;
+  previous: () => void;
+  next: () => void;
+  chooseResolution: (resolution: ResolvedDuplicateResolution) => void;
+  resolve: () => void;
+}): React.JSX.Element => {
+  const comparisonRows = duplicateComparisonRows(candidate);
+  const resolved = candidate.resolution !== 'Unresolved';
+  return (
+    <article className="duplicate-review-card">
+      <div className="duplicate-review-summary">
+        <div>
+          <span className={`relationship-badge relationship-${candidate.relationship}`}>
+            {DUPLICATE_RELATIONSHIP_LABELS[candidate.relationship]}
+          </span>
+          <h4>Score: {candidate.score.toFixed(2)}</h4>
+          <small>Detection algorithm: {candidate.algorithmVersion}</small>
+        </div>
+        <div className="candidate-navigation">
+          <span>
+            {candidatePosition + 1} of {candidateCount}
+          </span>
+          <button className="secondary-button" onClick={previous} disabled={candidateCount < 2}>
+            Previous
+          </button>
+          <button className="secondary-button" onClick={next} disabled={candidateCount < 2}>
+            Next
+          </button>
+        </div>
+      </div>
+
+      <section className="duplicate-reasons">
+        <h4>Why it was flagged</h4>
+        <ul>
+          {candidate.reasons.map((reason) => (
+            <li key={reason.code}>
+              <span>
+                {DUPLICATE_REASON_LABELS[reason.code] ??
+                  (reason.detail.trim() || 'Recorded detector reason')}
+              </span>
+              <code>{reason.code}</code>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="duplicate-comparison" aria-label="Duplicate candidate comparison">
+        <div className="duplicate-comparison-row comparison-heading">
+          <span>Field</span>
+          <strong>New observation</strong>
+          <strong>Existing comparable</strong>
+        </div>
+        {comparisonRows.map((row) => {
+          const differs = row.source !== row.comparable;
+          return (
+            <div className="duplicate-comparison-row" key={row.label}>
+              <strong>{row.label}</strong>
+              <span className={differs ? 'comparison-difference' : ''}>{row.source}</span>
+              <span className={differs ? 'comparison-difference' : ''}>{row.comparable}</span>
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="duplicate-evidence-grid">
+        {[
+          { label: 'New observation evidence', observation: candidate.sourceObservation },
+          { label: 'Existing observation evidence', observation: candidate.comparableObservation },
+        ].map(({ label, observation }) => (
+          <article key={label}>
+            <strong>{label}</strong>
+            <p>{observation.rawEvidence ?? 'No text evidence was stored for this observation.'}</p>
+            <small>
+              {observation.observerName} · {new Date(observation.observedAt).toLocaleDateString()} ·{' '}
+              {observation.source}
+            </small>
+          </article>
+        ))}
+      </section>
+
+      {resolved ? (
+        <div className="resolution-recorded">
+          <strong>Human decision: {DUPLICATE_RESOLUTION_LABELS[candidate.resolution]}</strong>
+          <span>Both original observations and their evidence remain unchanged.</span>
+        </div>
+      ) : (
+        <fieldset className="duplicate-resolution">
+          <legend>Record a human decision</legend>
+          <p>
+            Select one option, then record it explicitly. This never merges or edits either
+            observation.
+          </p>
+          <div className="resolution-options">
+            {DUPLICATE_RESOLUTION_OPTIONS.map((option) => (
+              <label key={option.value}>
+                <input
+                  type="radio"
+                  name={`duplicate-resolution-${candidate.id}`}
+                  checked={selectedResolution === option.value}
+                  onChange={() => chooseResolution(option.value)}
+                  disabled={busy}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+          <button
+            className="primary-button"
+            onClick={resolve}
+            disabled={busy || selectedResolution === null}
+          >
+            {busy ? 'Recording decision…' : 'Record human decision'}
+          </button>
+        </fieldset>
+      )}
+    </article>
+  );
 };
 
 const RuntimeBadge = ({
@@ -191,6 +500,7 @@ const CapturePage = ({
   initializeRuntime,
   submit,
   review,
+  confirm,
   save,
   correct,
   startNew,
@@ -201,6 +511,7 @@ const CapturePage = ({
   initializeRuntime: () => void;
   submit: (text: string) => void;
   review: () => void;
+  confirm: () => void;
   save: () => void;
   correct: (correction: CaptureCorrection) => void;
   startNew: () => void;
@@ -502,6 +813,13 @@ const CapturePage = ({
                       <dd>{fieldText(item.approximateAge, ageText)}</dd>
                     </div>
                   </dl>
+                  {item.contradictions.map((contradiction) => (
+                    <p className="contradiction-note" key={contradiction.field}>
+                      <b>Two answers for {contradictionFieldLabel(contradiction.field)}.</b> You
+                      said “{contradiction.previousText}”, then “{contradiction.currentText}”. Both
+                      are kept as evidence. Answer the question to say which one to use.
+                    </p>
+                  ))}
                 </article>
               ))}
             </div>
@@ -516,12 +834,30 @@ const CapturePage = ({
               </div>
             )}
             <div className="stacked-actions">
-              {capture.draft.state === 'NEEDS_FOLLOW_UP' && (
-                <button className="secondary-button" onClick={review} disabled={busy}>
-                  Review current information
-                </button>
+              {capture.draft.state === 'NEEDS_FOLLOW_UP' &&
+                capture.draft.equipment.every((item) => item.contradictions.length === 0) && (
+                  <button className="secondary-button" onClick={review} disabled={busy}>
+                    Review current information
+                  </button>
+                )}
+              {capture.draft.state === 'READY_FOR_REVIEW' && !capture.reviewConfirmed && (
+                <div className="confirmation-request">
+                  <p>The agent read the observation back to you. Confirm it before it is saved.</p>
+                  <div className="action-row">
+                    <button className="primary-button" onClick={confirm} disabled={busy}>
+                      Yes, that is correct
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => setEditing(true)}
+                      disabled={busy}
+                    >
+                      No, correct it
+                    </button>
+                  </div>
+                </div>
               )}
-              {capture.draft.state === 'READY_FOR_REVIEW' && (
+              {capture.draft.state === 'READY_FOR_REVIEW' && capture.reviewConfirmed && (
                 <button className="save-button" onClick={save} disabled={busy}>
                   Save observation
                 </button>
@@ -541,147 +877,310 @@ const CustomersPage = ({
   customers,
   selected,
   select,
+  busy,
+  resolve,
 }: {
   customers: readonly CustomerListItem[];
   selected: Customer360View | null;
   select: (id: string) => void;
-}): React.JSX.Element => (
-  <div className="customers-layout">
-    <aside className="customer-list-panel">
-      <span className="eyebrow">Customer 360</span>
-      <h1>Evidence-backed accounts</h1>
-      <div className="customer-list">
-        {customers.map((customer) => (
-          <button
-            key={customer.id}
-            className={selected?.customer.id === customer.id ? 'selected' : ''}
-            onClick={() => select(customer.id)}
-          >
-            <strong>{customer.name}</strong>
-            <span>
-              {customer.city ?? 'Unknown city'} · {customer.country ?? 'Unknown country'}
-            </span>
-          </button>
-        ))}
-      </div>
-    </aside>
-    <section className="customer-detail">
-      {!selected ? (
-        <div className="structured-empty">Select a customer.</div>
-      ) : (
-        (() => {
-          const sessionEvidence = groupEvidenceBySession(selected.evidence);
-          const equipmentLabels = equipmentLabelsById(selected.installedBase);
-          return (
-            <>
-              <div className="customer-hero">
-                <div>
-                  <span className="eyebrow">Facility</span>
-                  <h2>{selected.customer.name}</h2>
-                  <p>
-                    {selected.customer.city ?? 'Unknown city'},{' '}
-                    {selected.customer.country ?? 'Unknown country'}
-                  </p>
+  busy: boolean;
+  resolve: (candidateId: string, resolution: ResolvedDuplicateResolution) => Promise<boolean>;
+}): React.JSX.Element => {
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewTab, setReviewTab] = useState<'pending' | 'resolved'>('pending');
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const [selectedResolution, setSelectedResolution] = useState<ResolvedDuplicateResolution | null>(
+    null,
+  );
+  const candidates = selected?.duplicateCandidates[reviewTab] ?? [];
+  const activeCandidateIndex = Math.min(candidateIndex, Math.max(0, candidates.length - 1));
+  const candidate = candidates[activeCandidateIndex] ?? null;
+
+  const openReviews = (tab: 'pending' | 'resolved'): void => {
+    setReviewTab(tab);
+    setCandidateIndex(0);
+    setSelectedResolution(null);
+    setReviewing(true);
+  };
+
+  const recordResolution = (): void => {
+    if (!candidate || selectedResolution === null) return;
+    void resolve(candidate.id, selectedResolution).then((succeeded) => {
+      if (!succeeded) return;
+      setSelectedResolution(null);
+      setCandidateIndex(0);
+    });
+  };
+
+  return (
+    <div className="customers-layout">
+      <aside className="customer-list-panel">
+        <span className="eyebrow">Customer 360</span>
+        <h1>Evidence-backed accounts</h1>
+        <div className="customer-list">
+          {customers.map((customer) => (
+            <button
+              key={customer.id}
+              className={selected?.customer.id === customer.id ? 'selected' : ''}
+              onClick={() => select(customer.id)}
+            >
+              <strong>{customer.name}</strong>
+              <span>
+                {customer.city ?? 'Unknown city'} · {customer.country ?? 'Unknown country'}
+              </span>
+            </button>
+          ))}
+        </div>
+      </aside>
+      <section className="customer-detail">
+        {!selected ? (
+          <div className="structured-empty">Select a customer.</div>
+        ) : (
+          (() => {
+            const sessionEvidence = groupEvidenceBySession(selected.evidence);
+            const equipmentLabels = equipmentLabelsById(selected.installedBase);
+            return (
+              <>
+                <div className="customer-hero">
+                  <div>
+                    <span className="eyebrow">Facility</span>
+                    <h2>{selected.customer.name}</h2>
+                    <p>
+                      {selected.customer.city ?? 'Unknown city'},{' '}
+                      {selected.customer.country ?? 'Unknown country'}
+                    </p>
+                  </div>
+                  <div className="evidence-pill">
+                    {plural(sessionEvidence.length, 'supporting visit', 'supporting visits')}
+                  </div>
                 </div>
-                <div className="evidence-pill">
-                  {plural(sessionEvidence.length, 'supporting visit', 'supporting visits')}
+                <div className="section-title">
+                  <h3>Current installed-base projection</h3>
+                  <span>{selected.projectionStrategy}</span>
                 </div>
-              </div>
-              <div className="section-title">
-                <h3>Current installed-base projection</h3>
-                <span>{selected.projectionStrategy}</span>
-              </div>
-              <div className="projection-grid">
-                {selected.installedBase.map((item) => (
-                  <article className="projection-card" key={item.projectionKey}>
-                    <div className="projection-top">
-                      <span>{item.modality}</span>
-                      <b>× {item.quantity ?? '?'}</b>
+                <div className="projection-grid">
+                  {selected.installedBase.map((item) => {
+                    const rawModalityDiffers =
+                      item.rawModality !== null &&
+                      item.rawModality.trim().toLowerCase() !== item.modality.toLowerCase();
+                    const fieldEntries = Object.entries(item.fieldProvenance);
+                    return (
+                      <article className="projection-card" key={item.projectionKey}>
+                        <div className="projection-top">
+                          <span>{item.modality}</span>
+                          <b>× {item.quantity ?? '?'}</b>
+                        </div>
+                        {rawModalityDiffers && (
+                          <p className="raw-modality-note">
+                            Normalized: {item.modality} · Captured as: “{item.rawModality}”
+                          </p>
+                        )}
+                        <h4>
+                          {item.manufacturer ?? 'Unknown brand'} <span>{item.model ?? ''}</span>
+                        </h4>
+                        <dl>
+                          <div>
+                            <dt>Approx. age</dt>
+                            <dd>{ageText(item.approximateAge)}</dd>
+                          </div>
+                          <div>
+                            <dt>Installation</dt>
+                            <dd>{installationText(item.installationEstimate)}</dd>
+                          </div>
+                          <div>
+                            <dt>Confidence</dt>
+                            <dd>
+                              {item.confidence.level}
+                              {item.confidence.reasons.length > 0 && (
+                                <ul className="confidence-reasons">
+                                  {item.confidence.reasons.map((reason) => (
+                                    <li key={reason.code}>
+                                      {CONFIDENCE_REASON_LABELS[reason.code] ?? reason.code}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Status</dt>
+                            <dd>
+                              {item.status}
+                              <span className="status-explain">
+                                {STATUS_EXPLANATIONS[item.status]}
+                              </span>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Last observed</dt>
+                            <dd>{plural(item.daysSinceLastObservation, 'day')} ago</dd>
+                          </div>
+                          <div>
+                            <dt>Freshness</dt>
+                            <dd>{item.freshnessStatus}</dd>
+                          </div>
+                        </dl>
+                        {fieldEntries.length > 0 && (
+                          <details className="field-provenance">
+                            <summary>Field details</summary>
+                            <ul>
+                              {fieldEntries.map(([field, provenance]) => (
+                                <li key={field}>
+                                  <strong>{FIELD_LABELS[field] ?? field}</strong>
+                                  <span
+                                    className={`provenance-badge knowledge-${provenance.knowledgeState}`}
+                                  >
+                                    {KNOWLEDGE_STATE_LABELS[provenance.knowledgeState]}
+                                  </span>
+                                  {provenance.knowledgeState === 'Known' && (
+                                    <span className="provenance-badge certainty">
+                                      {certaintyText(provenance.certainty)}
+                                    </span>
+                                  )}
+                                  <span className="provenance-origin">{provenance.origin}</span>
+                                  {wasCorrected(provenance.evidenceIds) && (
+                                    <span className="provenance-badge corrected">Corrected</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                        <small>
+                          Backed by {plural(item.contributingObservationIds.length, 'observation')}
+                        </small>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="section-title">
+                  <h3>Supporting observations</h3>
+                  <span>Append-only evidence, one row per visit</span>
+                </div>
+                <div className="evidence-table">
+                  {sessionEvidence.map((session) => (
+                    <div className="evidence-row" key={session.sessionId}>
+                      <div>
+                        <strong>{new Date(session.observedAt).toLocaleDateString()}</strong>
+                        <span>
+                          {session.observerName} · {session.source}
+                        </span>
+                      </div>
+                      <p className="evidence-text">{session.rawInput ?? 'Non-text evidence'}</p>
+                      <div
+                        className="evidence-supports"
+                        title={session.equipmentObservationIds.join(', ')}
+                      >
+                        {[
+                          ...new Set(
+                            session.equipmentObservationIds.map(
+                              (id) => equipmentLabels.get(id) ?? 'Unmatched equipment',
+                            ),
+                          ),
+                        ].map((label) => (
+                          <span className="support-tag" key={label}>
+                            {label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <h4>
-                      {item.manufacturer ?? 'Unknown brand'} <span>{item.model ?? ''}</span>
-                    </h4>
-                    <dl>
-                      <div>
-                        <dt>Approx. age</dt>
-                        <dd>{ageText(item.approximateAge)}</dd>
-                      </div>
-                      <div>
-                        <dt>Installation</dt>
-                        <dd>{installationText(item.installationEstimate)}</dd>
-                      </div>
-                      <div>
-                        <dt>Confidence</dt>
-                        <dd>{item.confidence.level}</dd>
-                      </div>
-                      <div>
-                        <dt>Status</dt>
-                        <dd>{item.status}</dd>
-                      </div>
-                      <div>
-                        <dt>Last observed</dt>
-                        <dd>{plural(item.daysSinceLastObservation, 'day')} ago</dd>
-                      </div>
-                      <div>
-                        <dt>Freshness</dt>
-                        <dd>{item.freshnessStatus}</dd>
-                      </div>
-                    </dl>
-                    <small>
-                      Backed by {plural(item.contributingObservationIds.length, 'observation')}
-                    </small>
-                  </article>
-                ))}
-              </div>
-              <div className="section-title">
-                <h3>Supporting observations</h3>
-                <span>Append-only evidence, one row per visit</span>
-              </div>
-              <div className="evidence-table">
-                {sessionEvidence.map((session) => (
-                  <div className="evidence-row" key={session.sessionId}>
+                  ))}
+                </div>
+                {selected.duplicateCandidates.pending.length +
+                  selected.duplicateCandidates.resolved.length >
+                  0 && (
+                  <div className="duplicate-box">
                     <div>
-                      <strong>{new Date(session.observedAt).toLocaleDateString()}</strong>
+                      <strong>Possible matches detected</strong>
                       <span>
-                        {session.observerName} · {session.source}
+                        {plural(selected.duplicateCandidates.pending.length, 'pending candidate')} ·{' '}
+                        {plural(selected.duplicateCandidates.resolved.length, 'resolved candidate')}
+                        . Never merged automatically.
                       </span>
                     </div>
-                    <p className="evidence-text">{session.rawInput ?? 'Non-text evidence'}</p>
-                    <div
-                      className="evidence-supports"
-                      title={session.equipmentObservationIds.join(', ')}
-                    >
-                      {[
-                        ...new Set(
-                          session.equipmentObservationIds.map(
-                            (id) => equipmentLabels.get(id) ?? 'Unmatched equipment',
-                          ),
-                        ),
-                      ].map((label) => (
-                        <span className="support-tag" key={label}>
-                          {label}
-                        </span>
-                      ))}
+                    <div className="duplicate-box-actions">
+                      {selected.duplicateCandidates.pending.length > 0 && (
+                        <button className="primary-button" onClick={() => openReviews('pending')}>
+                          Review possible matches
+                        </button>
+                      )}
+                      {selected.duplicateCandidates.resolved.length > 0 && (
+                        <button
+                          className="secondary-button"
+                          onClick={() => openReviews('resolved')}
+                        >
+                          View resolved
+                        </button>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-              {selected.duplicateCandidates.length > 0 && (
-                <div className="duplicate-box">
-                  <strong>Possible matches detected</strong>
-                  <span>
-                    {plural(selected.duplicateCandidates.length, 'candidate')}, never merged
-                    automatically.
-                  </span>
-                </div>
-              )}
-            </>
-          );
-        })()
-      )}
-    </section>
-  </div>
-);
+                )}
+                {reviewing && (
+                  <section className="duplicate-review-panel">
+                    <div className="duplicate-review-heading">
+                      <div>
+                        <span className="eyebrow">Human review</span>
+                        <h3>Possible equipment matches</h3>
+                      </div>
+                      <button className="secondary-button" onClick={() => setReviewing(false)}>
+                        Back to Customer 360
+                      </button>
+                    </div>
+                    <div className="duplicate-review-tabs">
+                      <button
+                        className={reviewTab === 'pending' ? 'active' : ''}
+                        onClick={() => openReviews('pending')}
+                      >
+                        Pending ({selected.duplicateCandidates.pending.length})
+                      </button>
+                      <button
+                        className={reviewTab === 'resolved' ? 'active' : ''}
+                        onClick={() => openReviews('resolved')}
+                      >
+                        Resolved ({selected.duplicateCandidates.resolved.length})
+                      </button>
+                    </div>
+                    {candidate ? (
+                      <DuplicateReviewPanel
+                        candidate={candidate}
+                        candidatePosition={activeCandidateIndex}
+                        candidateCount={candidates.length}
+                        selectedResolution={selectedResolution}
+                        busy={busy}
+                        previous={() =>
+                          setCandidateIndex(
+                            activeCandidateIndex === 0
+                              ? candidates.length - 1
+                              : activeCandidateIndex - 1,
+                          )
+                        }
+                        next={() =>
+                          setCandidateIndex(
+                            activeCandidateIndex === candidates.length - 1
+                              ? 0
+                              : activeCandidateIndex + 1,
+                          )
+                        }
+                        chooseResolution={setSelectedResolution}
+                        resolve={recordResolution}
+                      />
+                    ) : (
+                      <div className="duplicate-review-empty">
+                        {reviewTab === 'pending'
+                          ? 'No duplicate candidates are pending review.'
+                          : 'No resolved duplicate candidates yet.'}
+                      </div>
+                    )}
+                  </section>
+                )}
+              </>
+            );
+          })()
+        )}
+      </section>
+    </div>
+  );
+};
 
 const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): React.JSX.Element => {
   const max = Math.max(1, ...Object.values(dashboard?.equipmentByModality ?? {}));
@@ -840,6 +1339,22 @@ function App(): React.JSX.Element {
     [run],
   );
 
+  const resolveDuplicateCandidate = useCallback(
+    async (candidateId: string, resolution: ResolvedDuplicateResolution): Promise<boolean> => {
+      const selectedCustomerId = selectedCustomer?.customer.id;
+      if (!selectedCustomerId) return false;
+      const result = await run(async () => {
+        unwrap(await window.installedBaseApi.resolveDuplicateCandidate(candidateId, resolution));
+        setSelectedCustomer(
+          unwrap(await window.installedBaseApi.getCustomer360(selectedCustomerId)),
+        );
+        return true;
+      });
+      return result ?? false;
+    },
+    [run, selectedCustomer?.customer.id],
+  );
+
   const navItems = useMemo(
     () => [
       { id: 'capture' as const, label: 'Capture', glyph: '✦' },
@@ -912,6 +1427,12 @@ function App(): React.JSX.Element {
                 setCapture(unwrap(await window.installedBaseApi.proceedToReview(capture.id))),
               )
             }
+            confirm={() =>
+              capture &&
+              void run(async () =>
+                setCapture(unwrap(await window.installedBaseApi.confirmReview(capture.id))),
+              )
+            }
             save={() =>
               capture &&
               void run(async () => {
@@ -935,9 +1456,12 @@ function App(): React.JSX.Element {
         )}
         {page === 'customers' && (
           <CustomersPage
+            key={selectedCustomer?.customer.id ?? 'no-customer-selected'}
             customers={customers}
             selected={selectedCustomer}
             select={selectCustomer}
+            busy={busy}
+            resolve={resolveDuplicateCandidate}
           />
         )}
         {page === 'dashboard' && <DashboardPage dashboard={dashboard} />}

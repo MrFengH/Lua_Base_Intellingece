@@ -178,6 +178,29 @@ describe('official seed through the projections', () => {
     }
   });
 
+  it('exposes only the field provenance the workbook actually gives, never a fabricated notes entry', () => {
+    const { database, repository } = seeded();
+    try {
+      const view = repository.getCustomer360('seed-customer-democare', NOW);
+      const item = view?.installedBase[0];
+      expect(item?.fieldProvenance).toBeTruthy();
+      expect(Object.keys(item?.fieldProvenance ?? {}).sort()).toEqual([
+        'approximateAge',
+        'manufacturer',
+        'modality',
+        'model',
+        'quantity',
+      ]);
+      // The workbook never states a notes provenance for this row; P3-S4 must not invent one.
+      expect(item?.fieldProvenance.notes).toBeUndefined();
+      // rawModality equals the normalized modality for every official row, so the presentation
+      // layer must not invent a "captured as" divergence that the source data does not contain.
+      expect(item?.rawModality).toBe(item?.modality);
+    } finally {
+      database.close();
+    }
+  });
+
   it('aggregates the whole official dataset on the Dashboard', () => {
     const { database, repository } = seeded();
     try {
@@ -203,6 +226,33 @@ describe('official seed through the projections', () => {
       expect(names).not.toContain('Hospital São Aurora');
       expect(names).not.toContain('Hospital Valle Norte');
       expect(names.sort()).toEqual([...OFFICIAL_CUSTOMERS].sort());
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('official observation status is transcribed, never recomputed (P3-S3)', () => {
+  it('keeps the workbook split of 13 Reported and 7 Estimated in the record table', () => {
+    const byStatus = OFFICIAL_INSTALLED_BASE_RECORDS.reduce<Record<string, number>>(
+      (totals, record) => ({ ...totals, [record.status]: (totals[record.status] ?? 0) + 1 }),
+      {},
+    );
+    expect(byStatus).toEqual({ Reported: 13, Estimated: 7 });
+  });
+
+  it('keeps the same split once the seed is applied to a database', () => {
+    const database = new LocalSqliteDatabase(':memory:');
+    try {
+      const repository = new SqliteInstalledBaseRepository(database);
+      applyDevelopmentSeed(repository);
+      const rows = database.connection
+        .prepare('SELECT status, COUNT(*) AS count FROM equipment_observations GROUP BY status')
+        .all() as unknown as ReadonlyArray<{ status: string; count: number }>;
+      expect(Object.fromEntries(rows.map((row) => [row.status, row.count]))).toEqual({
+        Reported: 13,
+        Estimated: 7,
+      });
     } finally {
       database.close();
     }

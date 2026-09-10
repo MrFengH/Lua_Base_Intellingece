@@ -235,3 +235,74 @@ into machine certainty — into the demo data itself.
 `src/infrastructure/seed/development-seed.ts` maps every official integer age through
 `officialAge`, and `tests/infrastructure/official-seed.test.ts` fails if any seeded age is
 recorded as `exact`. Folded into the amendment of decision 9 above.
+
+## 16. Observation status is asked, and an explicit statement of source outranks age precision (`B-01`, `B-02`)
+
+**Context:** `status` was derived from age precision alone, so `Confirmed` and `Unknown` were
+unreachable and `Reported` meant "the age was not an estimate" rather than "someone told me". The
+official Agent Question Logic makes step 10 a question, and step 12, the review confirmation, the
+only derived step it marks `Required?: Yes`.
+
+**Decision:**
+
+1. Status is decided by a session-level `observationBasis`, which is set either by an unambiguous
+   statement of source in the observer's own words or by their answer to a `Preferred` follow-up
+   question. The four official values map one to one onto it, and a declined question stores
+   `Unknown`.
+2. The age-derived rule survives only as the fallback for an observation whose source was never
+   established. It no longer overrides a stated source.
+3. Saving requires an explicit confirmation of a deterministic summary. Reaching `READY_FOR_REVIEW`
+   is not a confirmation, and a correction withdraws one already given.
+
+**Reason:** Status and certainty are different axes, and letting age precision decide status made
+the four-value vocabulary decorative. `ROADMAP.md` had proposed keeping the age-derived `Estimated`
+as an override and asking only a two-way question. That was narrowed by a human on 2026-09-09:
+"I saw an MR that looked about seven years old" must be `Confirmed` with an `Uncertain` age, which
+an age override would make impossible, and the official question offers three answers rather than
+two. `ROADMAP.md` also said not to infer status from wording; the narrower rule adopted here reads
+only unambiguous provenance markers and asks whenever they are absent, so nothing is inferred from
+silence.
+
+**Consequences:** A short deterministic classifier now sits in `src/domain/rules/`, applied to the
+observer's own words and to the answer. It resolves nothing it is unsure of, which routes the case
+to the question. The extraction schema, the prompt and the model are untouched: provenance is
+derived by rules, consistent with decision 10. Confidence weights and certainty semantics are
+unchanged. Historical records keep the status they were saved with.
+
+**Status:** Accepted, implemented in `P3-S3`. Per-equipment-group provenance, and showing status
+and provenance on Customer 360, are not in scope here; the latter is `P3-S4`.
+
+## 17. A contradiction inside one capture is asked about, never resolved by message order (`E-06`)
+
+**Decision:** When a later statement supplies a value that differs from a value the same capture
+already holds, the workflow does not simply overwrite it.
+
+1. Evidence ids accumulate on the field. A value that changes keeps the evidence ids of the value
+   it replaced, so both claims stay reachable. This applies to extraction merges, follow-up
+   answers, declared unknowns and review corrections alike.
+2. Three outcomes are distinguished, and none of them looks at the values themselves. A field that
+   was `Missing`, `DeclaredUnknown`, or already held the same value is enriched. Wording that
+   explicitly corrects the earlier claim is a self-correction and the later value is taken. Anything
+   else is a contradiction.
+3. A contradiction keeps the later value active so review has something to show, marks the field
+   `Uncertain`, and enqueues a `Required` follow-up naming both claims. Review cannot be reached and
+   any existing confirmation is withdrawn until it is answered.
+
+**Reason:** `mergeEquipment` previously overwrote any known value whenever an extraction returned a
+non-null one, with no comparison and no record. That turned "era NovaMed... bueno, quizá Orion" into
+a confident stored fact chosen by message order, which is exactly the fabrication rule 10 forbids.
+`ROADMAP.md` requires the field to stay known, become `Uncertain`, and produce a follow-up naming
+both values, and forbids deciding which one is right.
+
+**Consequences:** `CaptureEquipmentDraft` carries the open disagreements while they last; nothing
+new is persisted and no migration was needed, because the accumulated evidence ids and the
+append-only evidence rows already answer what was said first, what was said after, and which value
+was accepted. Self-correction is recognised by a short deterministic list of explicit phrases, with
+hedged wording always winning over it, so a guess is never mistaken for a correction. Confidence
+weights, certainty semantics, `observationBasis`, `projectionSignature`, the official seed, the
+extraction schema and the model are untouched. `DuplicateCandidate` is a separate mechanism for
+observations across saved sessions and is not involved.
+
+**Status:** Accepted, implemented in `P3-S6`. A restated modality is out of reach of the extraction
+merge, because extraction groups equipment by modality; that correction goes through the review
+correction path, which preserves the earlier evidence ids in the same way.

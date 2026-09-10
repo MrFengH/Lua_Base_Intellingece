@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SavedObservationAggregate } from '@/domain';
-import { deriveInstallationEstimate, normalizeName } from '@/domain';
+import { deriveInstallationEstimate, normalizeName, OBSERVATION_STATUSES } from '@/domain';
 import { LocalSqliteDatabase, SqliteInstalledBaseRepository } from '@/infrastructure/persistence';
 import { applyDevelopmentSeed, DEVELOPMENT_SEED_KEY } from '@/infrastructure/seed';
 import { createLegacyDatabaseFile } from '../fixtures/legacy-database';
@@ -277,6 +278,76 @@ describe('upgrading a pre-P2-S2 database to the official seed', () => {
           "SELECT COUNT(*) AS count FROM observation_sessions WHERE id = 'user-session-1'",
         ),
       ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+  it('opens a pre-P3-S3 database without reinterpreting the status it already stored', () => {
+    // P3-S3 changes how a *new* capture derives its status. A record written before it must keep
+    // the value it was saved with, whatever the new rule would have produced for the same age.
+    createLegacyDatabaseFile(databasePath, [...createLegacyDevelopmentSeed(), userObservation()]);
+    const { database, repository } = openDatabase();
+    try {
+      applyDevelopmentSeed(repository);
+      const row = database.connection
+        .prepare("SELECT status FROM equipment_observations WHERE id = 'user-equipment-1'")
+        .get() as { status: string };
+      expect(row.status).toBe('Estimated');
+      const statuses = database.connection
+        .prepare('SELECT DISTINCT status FROM equipment_observations')
+        .all() as unknown as ReadonlyArray<{ status: string }>;
+      const official: readonly string[] = OBSERVATION_STATUSES;
+      expect(statuses.every((item) => official.includes(item.status))).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('opens a pre-P3-S5 database and keeps an existing unresolved candidate accessible', () => {
+    const legacyAggregate = createLegacyDevelopmentSeed()[0]!;
+    const source = legacyAggregate.equipment[0]!;
+    const comparable = legacyAggregate.equipment[1]!;
+    createLegacyDatabaseFile(databasePath);
+
+    const legacyConnection = new DatabaseSync(databasePath, { timeout: 5_000 });
+    try {
+      legacyConnection
+        .prepare(
+          `INSERT INTO duplicate_candidates
+           (id, source_observation_id, candidate_observation_id, candidate_installed_base_id,
+            score, explanation_json, relationship, resolution, algorithm_version, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'legacy-duplicate-candidate',
+          source.id,
+          comparable.id,
+          null,
+          0.72,
+          JSON.stringify([{ code: 'SAME_CUSTOMER', detail: 'Same customer.', contribution: 0.3 }]),
+          'PossibleDuplicate',
+          'Unresolved',
+          'duplicate-v1',
+          NOW,
+        );
+    } finally {
+      legacyConnection.close();
+    }
+
+    const { database, repository } = openDatabase();
+    try {
+      const view = repository.getCustomer360(legacyAggregate.customer.id, NOW);
+      expect(view?.duplicateCandidates.pending).toHaveLength(1);
+      expect(view?.duplicateCandidates.pending[0]).toEqual(
+        expect.objectContaining({
+          id: 'legacy-duplicate-candidate',
+          score: 0.72,
+          relationship: 'PossibleDuplicate',
+          resolution: 'Unresolved',
+        }),
+      );
+      expect(view?.duplicateCandidates.pending[0]?.sourceObservation.id).toBe(source.id);
+      expect(view?.duplicateCandidates.pending[0]?.comparableObservation.id).toBe(comparable.id);
     } finally {
       database.close();
     }

@@ -67,23 +67,23 @@ behaviour or a model change.
 
 ### Required cases
 
-| Case                            | Input sketch                                              | Must produce                                       | Must never produce                       |
-| ------------------------------- | --------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
-| Complete observation            | facility, modality, quantity, brand, age all stated       | all fields `Known`, certainty `Explicit`           | any invented field                       |
-| Partial observation             | modality and quantity only                                | brand and model `null`, follow-up offered          | a guessed brand                          |
-| Unknown manufacturer            | "un tomógrafo, no vi la marca"                            | `manufacturer: null`                               | a brand inferred from context            |
-| Unknown model                   | "un equipo de Orion Imaging, no pude ver el modelo"       | `model: null`                                      | a model name inferred from the brand     |
-| Several devices in one sentence | "dos resonadores NovaMed y un tomógrafo Orion Imaging"    | separate MR and CT groups                          | one merged group                         |
-| Differing ages, same modality   | "dos tienen unos nueve años y uno unos tres"              | two groups, 2 at ≈9 and 1 at ≈3                    | one group of three with an averaged age  |
-| Speaker self-corrects           | "primero pensé que eran tres, pero en realidad había dos" | quantity 2                                         | quantity 3, or both                      |
-| Ambiguous quantity              | "había varios ecógrafos"                                  | `quantity: null`, follow-up offered                | an invented number                       |
-| Approximate age                 | "quizá unos ocho años"                                    | `{ type: 'estimate', ... }`, certainty `Uncertain` | `{ type: 'exact', years: 8 }`            |
-| Qualitative age                 | "parece bastante nuevo"                                   | `{ type: 'qualitative', label: ... }`              | any numeric age                          |
-| Contradictory information       | "era de NovaMed... bueno, quizá de Aurelia Health"        | explicit uncertainty or a follow-up                | a silent pick between the two            |
-| Colloquial phrasing             | "tenían un par de máquinas de resonancia bastante viejas" | MR, quantity 2, qualitative age                    | a numeric age from "viejas"              |
-| Spanish                         | the README demo sentence in Spanish                       | correct extraction                                 | untranslated field values                |
-| English                         | the same in English                                       | correct extraction                                 | —                                        |
-| Declared unknown                | "no sé" answering a follow-up                             | `DeclaredUnknown`, question not repeated           | the field left `Missing` and asked again |
+| Case                            | Input sketch                                              | Must produce                                               | Must never produce                       |
+| ------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------- |
+| Complete observation            | facility, modality, quantity, brand, age all stated       | all fields `Known`, certainty `Explicit`                   | any invented field                       |
+| Partial observation             | modality and quantity only                                | brand and model `null`, follow-up offered                  | a guessed brand                          |
+| Unknown manufacturer            | "un tomógrafo, no vi la marca"                            | `manufacturer: null`                                       | a brand inferred from context            |
+| Unknown model                   | "un equipo de Orion Imaging, no pude ver el modelo"       | `model: null`                                              | a model name inferred from the brand     |
+| Several devices in one sentence | "dos resonadores NovaMed y un tomógrafo Orion Imaging"    | separate MR and CT groups                                  | one merged group                         |
+| Differing ages, same modality   | "dos tienen unos nueve años y uno unos tres"              | two groups, 2 at ≈9 and 1 at ≈3                            | one group of three with an averaged age  |
+| Speaker self-corrects           | "primero pensé que eran tres, pero en realidad había dos" | quantity 2                                                 | quantity 3, or both                      |
+| Ambiguous quantity              | "había varios ecógrafos"                                  | `quantity: null`, follow-up offered                        | an invented number                       |
+| Approximate age                 | "quizá unos ocho años"                                    | `{ type: 'estimate', ... }`, certainty `Uncertain`         | `{ type: 'exact', years: 8 }`            |
+| Qualitative age                 | "parece bastante nuevo"                                   | `{ type: 'qualitative', label: ... }`                      | any numeric age                          |
+| Contradictory information       | "era de NovaMed... bueno, quizá de Aurelia Health"        | both claims kept, field `Uncertain`, follow-up naming both | a silent pick between the two            |
+| Colloquial phrasing             | "tenían un par de máquinas de resonancia bastante viejas" | MR, quantity 2, qualitative age                            | a numeric age from "viejas"              |
+| Spanish                         | the README demo sentence in Spanish                       | correct extraction                                         | untranslated field values                |
+| English                         | the same in English                                       | correct extraction                                         | —                                        |
+| Declared unknown                | "no sé" answering a follow-up                             | `DeclaredUnknown`, question not repeated                   | the field left `Missing` and asked again |
 
 ### The assertion that matters most
 

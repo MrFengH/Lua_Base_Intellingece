@@ -1,9 +1,10 @@
+import type { ResolvedDuplicateResolution } from '@/domain';
 import type { Customer360View, CustomerListItem, DashboardView } from '../contracts';
-import type { Clock, InstalledBaseQueryRepository } from '../ports';
+import type { Clock, DuplicateCandidateRepository, InstalledBaseQueryRepository } from '../ports';
 
 export class InstalledBaseQueryService {
   constructor(
-    private readonly repository: InstalledBaseQueryRepository,
+    private readonly repository: InstalledBaseQueryRepository & DuplicateCandidateRepository,
     private readonly clock: Clock,
   ) {}
 
@@ -17,5 +18,13 @@ export class InstalledBaseQueryService {
 
   getDashboard(): DashboardView {
     return this.repository.getDashboard(this.clock.now());
+  }
+
+  resolveDuplicateCandidate(
+    candidateId: string,
+    resolution: ResolvedDuplicateResolution,
+  ): { candidateId: string; resolution: ResolvedDuplicateResolution } {
+    this.repository.resolveDuplicateCandidate(candidateId, resolution);
+    return { candidateId, resolution };
   }
 }

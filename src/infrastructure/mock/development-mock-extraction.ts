@@ -82,6 +82,8 @@ const pendingAnswer = (text: string, context: ExtractionContext): ObservationExt
     }
     return result;
   }
+  // Provenance is derived by domain rules from the observer's own words, never by the extractor.
+  if (question.field === 'ObservationBasis') return result;
   if (question.target.type !== 'Equipment') return null;
   const item: ObservationExtraction['equipment'][number] = {
     modality: pendingModality(context),
@@ -110,6 +112,53 @@ const pendingAnswer = (text: string, context: ExtractionContext): ObservationExt
     }
   }
   result.equipment.push(item);
+  return result;
+};
+
+/**
+ * Openers that mark a sentence as a second thought about something already said. The list is
+ * deliberately short and anchored to the start of the message: it exists so a contradiction can
+ * be reproduced deterministically in development, not to parse conversation.
+ */
+const RESTATEMENT =
+  /^(?:perd[oó]n|perdona|disculpa|bueno|no|espera|oye|corrijo|creo\s+que|ahora\s+que\s+(?:lo\s+)?recuerdo|actually|sorry|wait|hold\s+on|correction)\b[,:]?\s+(?:en\s+realidad\s+|realmente\s+|mejor\s+dicho\s+|ahora\s+que\s+(?:lo\s+)?recuerdo\s+|quiz[aá]s?\s+|tal\s+vez\s+|creo\s+que\s+|i\s+think\s+|maybe\s+)*(?:eran|era|fueron|fue|son|es|hab[ií]an|hab[ií]a|ten[ií]an|tienen|were|was|are|is|it(?:'|’)?s|they(?:'|’)?re)?\b\s*(?:unos|unas|una|un|los|las|el|la|del|de|the|an|a|from)?\b\s*(.+?)[.!]*$/iu;
+
+/**
+ * Routes a restatement to the field it actually names, but only when that field already holds a
+ * value and is not the one the pending question is asking about. Anything else falls through to
+ * the ordinary answer path, so no existing flow changes.
+ */
+const restatement = (text: string, context: ExtractionContext): ObservationExtraction | null => {
+  const draft = context.captureDraft;
+  const group = draft?.equipment[0];
+  if (!group || group.modality.state !== 'Known') return null;
+  const value = text.trim().match(RESTATEMENT)?.[1]?.trim();
+  if (!value) return null;
+
+  const singleToken = /^(?:\d+|[\p{L}]+)$/u.test(value);
+  // A restated modality is left alone: extraction groups equipment by modality, so it cannot
+  // express "the same group is a different modality". That correction goes through review.
+  if (normalizeModality(value) !== 'Unknown') return null;
+  const quantity = singleToken ? parseNumber(value) : null;
+  const field = quantity !== null ? 'Quantity' : /^\p{Lu}/u.test(value) ? 'Manufacturer' : null;
+  if (field === null || field === context.pendingQuestion?.field) return null;
+  if (field === 'Quantity' && group.quantity.state !== 'Known') return null;
+  if (field === 'Manufacturer' && group.manufacturer.state !== 'Known') return null;
+
+  // The modality is echoed only so the restatement merges into the group it is about. Certainty
+  // stays `Explicit` because hedging in a restatement is read from the observer's wording by the
+  // workflow's restatement rule; claiming it here would downgrade fields nobody restated.
+  const result = blankExtraction();
+  result.equipment.push({
+    modality: group.modality.value,
+    rawModality: null,
+    quantity: field === 'Quantity' ? quantity : null,
+    manufacturer: field === 'Manufacturer' ? value : null,
+    model: null,
+    approximateAge: { type: 'unknown' } as ApproximateAge,
+    notes: null,
+    certainty: 'Explicit' as const,
+  });
   return result;
 };
 
@@ -242,9 +291,9 @@ export class DevelopmentMockObservationExtractionService implements ObservationE
   }
 
   async extract(text: string, context: ExtractionContext): Promise<ObservationExtraction> {
-    const pending = pendingAnswer(text, context);
     const candidate =
-      pending ??
+      restatement(text, context) ??
+      pendingAnswer(text, context) ??
       ({
         customer: extractCustomer(text, context),
         equipment: extractEquipment(text),

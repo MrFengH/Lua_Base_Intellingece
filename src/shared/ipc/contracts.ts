@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { RESOLVED_DUPLICATE_RESOLUTIONS } from '@/domain';
+import type { ResolvedDuplicateResolution } from '@/domain';
 import type {
   CaptureCorrection,
   CaptureSessionView,
@@ -49,6 +51,12 @@ export const CorrectionRequestSchema = z
   })
   .strict();
 export const CustomerRequestSchema = z.object({ customerId: z.string().min(1) }).strict();
+export const DuplicateResolutionRequestSchema = z
+  .object({
+    candidateId: z.string().min(1),
+    resolution: z.enum(RESOLVED_DUPLICATE_RESOLUTIONS),
+  })
+  .strict();
 
 export interface IpcFailure {
   ok: false;
@@ -67,10 +75,15 @@ export interface InstalledBaseApi {
     correction: CaptureCorrection,
   ): Promise<IpcResult<CaptureSessionView>>;
   proceedToReview(captureId: string): Promise<IpcResult<CaptureSessionView>>;
+  confirmReview(captureId: string): Promise<IpcResult<CaptureSessionView>>;
   saveCapture(
     captureId: string,
   ): Promise<IpcResult<{ capture: CaptureSessionView; customerId: string }>>;
   listCustomers(): Promise<IpcResult<readonly CustomerListItem[]>>;
   getCustomer360(customerId: string): Promise<IpcResult<Customer360View | null>>;
+  resolveDuplicateCandidate(
+    candidateId: string,
+    resolution: ResolvedDuplicateResolution,
+  ): Promise<IpcResult<{ candidateId: string; resolution: ResolvedDuplicateResolution }>>;
   getDashboard(): Promise<IpcResult<DashboardView>>;
 }

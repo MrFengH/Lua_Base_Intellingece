@@ -17,6 +17,8 @@ export interface CaptureSessionView {
   draft: CaptureDraft;
   messages: readonly ConversationMessage[];
   pendingQuestion: FollowUpQuestion | null;
+  /** True only after the observer explicitly accepted the agent's summary. */
+  reviewConfirmed: boolean;
 }
 
 export interface CaptureCorrection {
