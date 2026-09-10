@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
+  cancel,
   completion,
   getLoadedModelInfo,
   heartbeat,
+  InferenceCancelledError,
   loadModel,
   QWEN3_1_7B_INST_Q4,
   QWEN3_600M_INST_Q4,
@@ -28,7 +30,43 @@ import {
 } from '@/application/prompts';
 
 export type QvacLifecycleEvent =
-  'runtime-initialized' | 'model-loaded' | 'inference-completed' | 'structured-output-validated';
+  | 'runtime-initialized'
+  | 'model-loaded'
+  | 'inference-completed'
+  | 'structured-output-validated'
+  | 'extraction-retried';
+
+/**
+ * Hard ceiling on generated tokens for one structured extraction, via @qvac/sdk's officially
+ * supported `generationParams.predict` (see @qvac/inference's `generationParamsSchema`). The
+ * corpus's largest legitimate case needs a few hundred tokens of JSON; this stays generous for
+ * that while firmly bounding the multi-thousand-token runaway generations observed in a rare
+ * (tail-risk) degenerate-repetition failure mode, turning an open-ended 50s+ stall into a fast,
+ * cleanly detectable truncation that the one-retry policy below can react to.
+ */
+const EXTRACTION_MAX_OUTPUT_TOKENS = 1024;
+
+/** Default adapter-level ceiling on one extraction attempt; see `QvacExtractionConfig.extractionTimeoutMs`. */
+const DEFAULT_EXTRACTION_TIMEOUT_MS = 20_000;
+
+/** Thrown by the adapter itself when an attempt is cancelled for exceeding its timeout. */
+class QvacExtractionTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`QVAC extraction exceeded ${timeoutMs} ms and was cancelled.`);
+    this.name = 'QvacExtractionTimeoutError';
+  }
+}
+
+/**
+ * The only failure modes one retry is for: an adapter timeout, or output that never became valid,
+ * schema-conforming JSON (both are exactly what the rare runaway-generation tail risk produces).
+ * Anything else — "not initialized", a genuine SDK/model error, and so on — is not transient in
+ * the same way and is surfaced immediately instead.
+ */
+const isRetryableExtractionError = (error: unknown): boolean =>
+  error instanceof QvacExtractionTimeoutError ||
+  error instanceof SyntaxError ||
+  error instanceof z.ZodError;
 
 /**
  * Case- and punctuation-insensitive placeholder strings a model sometimes writes into a field
@@ -98,6 +136,8 @@ export interface QvacExtractionConfig {
    */
   modelDescriptor?: QvacModelDescriptor;
   contextSize?: number;
+  /** Ceiling on one extraction attempt before it is cancelled and retried once; see `extract`. */
+  extractionTimeoutMs?: number;
   onLifecycleEvent?: (event: QvacLifecycleEvent) => void;
 }
 
@@ -189,31 +229,89 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
     }
     this.setRuntime({ status: 'processing', detail: 'QVAC is processing locally.' });
     try {
-      const jsonSchema = z.toJSONSchema(ObservationExtractionSchema);
-      const run = completion({
-        modelId: this.modelId,
-        history: [
-          { role: 'system', content: OBSERVATION_EXTRACTOR_SYSTEM_PROMPT },
-          { role: 'user', content: buildObservationExtractionPrompt(text, context) },
-        ],
-        stream: true,
-        responseFormat: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'installed_base_observation',
-            schema: jsonSchema,
-            strict: true,
-          },
-        },
-        // No generationParams override: @qvac/sdk officially supports `temp` and `seed` for
-        // reproducible, low-variance sampling, and `{ temp: 0 }`, `{ temp: 0.1 }`, and
-        // `{ seed: 42 }` alone were each tried here. All three measurably destabilized this
-        // model's grammar-constrained JSON decoding — a free-text field would occasionally enter
-        // a degenerate repetition loop, producing an unterminated string and a 50s+ stall, on
-        // cases the model's own default sampling always completed cleanly across a full corpus
-        // run. The default (unset) sampling profile is the only configuration verified stable
-        // here, so it is kept rather than trading a reproducibility gain for that risk.
+      const validated = await this.extractWithOneRetry(text, context);
+      this.setRuntime({ status: 'ready', detail: 'Last extraction completed on-device.' });
+      return normalizeExtraction(validated);
+    } catch (error) {
+      this.setRuntime({
+        status: 'error',
+        detail: error instanceof Error ? error.message : 'Unknown QVAC inference error.',
       });
+      throw error;
+    }
+  }
+
+  /**
+   * Retries exactly once, and only for the two symptoms a stalled or runaway generation
+   * produces: an adapter timeout, or output that never parsed/validated as the schema. The retry
+   * re-issues the identical prompt, model, and (lack of) sampling override — nothing about what
+   * is asked changes, only that it is asked again once. A second failure of either kind is never
+   * swallowed; it propagates as-is.
+   */
+  private async extractWithOneRetry(
+    text: string,
+    context: ExtractionContext,
+  ): Promise<ObservationExtraction> {
+    try {
+      return await this.runSingleExtractionAttempt(text, context);
+    } catch (firstError) {
+      if (!isRetryableExtractionError(firstError)) throw firstError;
+      const reason = firstError instanceof Error ? firstError.message : String(firstError);
+      this.config.onLifecycleEvent?.('extraction-retried');
+      console.warn(
+        `[QVAC] extraction attempt failed (${reason}); retrying once with the same prompt, ` +
+          'model, and sampling.',
+      );
+      return await this.runSingleExtractionAttempt(text, context);
+    }
+  }
+
+  /** One full completion call: request, drain, parse, validate. No retry logic lives here. */
+  private async runSingleExtractionAttempt(
+    text: string,
+    context: ExtractionContext,
+  ): Promise<ObservationExtraction> {
+    const modelId = this.modelId;
+    if (!modelId) {
+      throw new Error('QVAC is not initialized. Load the on-device model before capturing.');
+    }
+    const jsonSchema = z.toJSONSchema(ObservationExtractionSchema);
+    const run = completion({
+      modelId,
+      history: [
+        { role: 'system', content: OBSERVATION_EXTRACTOR_SYSTEM_PROMPT },
+        { role: 'user', content: buildObservationExtractionPrompt(text, context) },
+      ],
+      stream: true,
+      responseFormat: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'installed_base_observation',
+          schema: jsonSchema,
+          strict: true,
+        },
+      },
+      // `predict` only — an output-length ceiling, not a sampling parameter. No `temp`/`seed`
+      // override: those were tried and reverted (see docs/qvac-eval-runs' history) because they
+      // destabilized this model's grammar-constrained decoding without any accuracy benefit over
+      // the prompt/normalization changes alone. `predict` is officially supported (see
+      // @qvac/inference's `generationParamsSchema`) and bounds the same rare runaway-generation
+      // tail risk from the output-length side, independent of sampling.
+      generationParams: { predict: EXTRACTION_MAX_OUTPUT_TOKENS },
+    });
+
+    const timeoutMs = this.config.extractionTimeoutMs ?? DEFAULT_EXTRACTION_TIMEOUT_MS;
+    const timeoutHandle = setTimeout(() => {
+      // Official cancel-by-requestId path (@qvac/sdk `cancel`, requestId synchronous on
+      // `CompletionRun`): ends `run.events` normally with `stopReason: "cancelled"` and makes
+      // `run.final` reject with `InferenceCancelledError`, caught below and turned into an
+      // honest, attributable timeout error. Swallow a rejection here only (e.g. the request
+      // already finished naturally in the race with this timer) — never a bare unhandled
+      // rejection.
+      cancel({ requestId: run.requestId }).catch(() => undefined);
+    }, timeoutMs);
+
+    try {
       for await (const event of run.events) {
         // Draining events is the canonical QVAC completion lifecycle; raw tokens are not logged.
         if (event.type === 'contentDelta') continue;
@@ -223,14 +321,14 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
       const parsed: unknown = JSON.parse(final.contentText.trim());
       const validated = ObservationExtractionSchema.parse(parsed);
       this.config.onLifecycleEvent?.('structured-output-validated');
-      this.setRuntime({ status: 'ready', detail: 'Last extraction completed on-device.' });
-      return normalizeExtraction(validated);
+      return validated;
     } catch (error) {
-      this.setRuntime({
-        status: 'error',
-        detail: error instanceof Error ? error.message : 'Unknown QVAC inference error.',
-      });
+      if (error instanceof InferenceCancelledError) {
+        throw new QvacExtractionTimeoutError(timeoutMs);
+      }
       throw error;
+    } finally {
+      clearTimeout(timeoutHandle);
     }
   }
 

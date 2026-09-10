@@ -353,6 +353,7 @@ async function main(): Promise<void> {
     'model-loaded': 'PASS: model loaded',
     'inference-completed': 'inference completed',
     'structured-output-validated': 'structured output validated',
+    'extraction-retried': 'extraction attempt failed and was retried once',
   };
   const extractor = new QvacObservationExtractionService({
     modelPath: process.env.CIB_QVAC_MODEL_PATH ?? benchmarkRegistrySource,

@@ -5,6 +5,7 @@ const messages: Readonly<Record<QvacLifecycleEvent, string>> = {
   'model-loaded': 'PASS: model loaded',
   'inference-completed': 'PASS: local inference completed',
   'structured-output-validated': 'PASS: structured output validated',
+  'extraction-retried': 'WARN: extraction attempt failed and was retried once',
 };
 
 const service = new QvacObservationExtractionService({
