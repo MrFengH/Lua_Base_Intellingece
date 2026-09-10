@@ -12,7 +12,7 @@ const isMissing = <T>(field: DraftField<T>): boolean => field.state === 'Missing
 const equipmentLabel = (equipment: CaptureEquipmentDraft): string =>
   equipment.modality.state === 'Known'
     ? equipment.modality.value
-    : `equipment group ${equipment.order + 1}`;
+    : `grupo de equipos ${equipment.order + 1}`;
 
 const equipmentQuestion = (
   equipment: CaptureEquipmentDraft,
@@ -65,7 +65,7 @@ export class FollowUpQuestionService {
         field: 'CustomerName',
         priority: 'Required',
         target: { type: 'Customer' },
-        text: 'What hospital or clinic did you visit?',
+        text: '¿Qué hospital o clínica visitó?',
       };
     }
 
@@ -75,7 +75,7 @@ export class FollowUpQuestionService {
         field: 'Location',
         priority: 'Required',
         target: { type: 'Customer' },
-        text: 'What city and country is it located in?',
+        text: '¿En qué ciudad y país se encuentra?',
       };
     }
 
@@ -85,7 +85,7 @@ export class FollowUpQuestionService {
         field: 'Modality',
         priority: 'Required',
         target: { type: 'EquipmentCollection' },
-        text: 'What type of medical equipment did you observe?',
+        text: '¿Qué tipo de equipo médico observó?',
       };
     }
 
@@ -95,7 +95,7 @@ export class FollowUpQuestionService {
           equipment,
           'Modality',
           'Required',
-          `What is the modality of ${equipmentLabel(equipment)}?`,
+          `¿Cuál es la modalidad de ${equipmentLabel(equipment)}?`,
         );
       }
       if (isMissing(equipment.quantity)) {
@@ -103,7 +103,7 @@ export class FollowUpQuestionService {
           equipment,
           'Quantity',
           'Required',
-          `How many ${equipmentLabel(equipment)} systems did you observe?`,
+          `¿Cuántos equipos de ${equipmentLabel(equipment)} observó?`,
         );
       }
     }
@@ -114,7 +114,7 @@ export class FollowUpQuestionService {
           equipment,
           'Manufacturer',
           'Preferred',
-          `Do you know the manufacturer of the ${equipmentLabel(equipment)} systems?`,
+          `¿Conoce el fabricante de los equipos de ${equipmentLabel(equipment)}?`,
         );
       }
       if (isMissing(equipment.approximateAge)) {
@@ -122,7 +122,7 @@ export class FollowUpQuestionService {
           equipment,
           'ApproximateAge',
           'Preferred',
-          `Do you know the approximate age of the ${equipmentLabel(equipment)} systems?`,
+          `¿Conoce la antigüedad aproximada de los equipos de ${equipmentLabel(equipment)}?`,
         );
       }
     }
@@ -136,7 +136,7 @@ export class FollowUpQuestionService {
         field: 'ObservationBasis',
         priority: 'Preferred',
         target: { type: 'EquipmentCollection' },
-        text: 'Did you observe this equipment directly, was it reported to you by someone else, or is it an estimate?',
+        text: '¿Observó este equipo directamente, se lo reportó otra persona, o es una estimación?',
       };
     }
 
@@ -146,7 +146,7 @@ export class FollowUpQuestionService {
           equipment,
           'Model',
           'Optional',
-          `Do you know the model of the ${equipmentLabel(equipment)} systems?`,
+          `¿Conoce el modelo de los equipos de ${equipmentLabel(equipment)}?`,
         );
       }
       if (isMissing(equipment.notes)) {
@@ -154,7 +154,7 @@ export class FollowUpQuestionService {
           equipment,
           'Notes',
           'Optional',
-          `Would you like to add notes for the ${equipmentLabel(equipment)} systems?`,
+          `¿Desea agregar notas para los equipos de ${equipmentLabel(equipment)}?`,
         );
       }
     }

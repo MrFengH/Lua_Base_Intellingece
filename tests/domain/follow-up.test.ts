@@ -111,9 +111,9 @@ describe('FollowUpQuestionService observation basis question (P3-S3)', () => {
 
   it('phrases the question in plain language without exposing internal values', () => {
     const text = new FollowUpQuestionService().next(withoutBasis())?.text ?? '';
-    expect(text).toMatch(/observe/i);
-    expect(text).toMatch(/reported/i);
-    expect(text).toMatch(/estimate/i);
+    expect(text).toMatch(/observó/i);
+    expect(text).toMatch(/reportó/i);
+    expect(text).toMatch(/estimación/i);
     expect(text).not.toMatch(/DirectObservation|ReportedByOther|Confirmed|Estimated/);
   });
 });

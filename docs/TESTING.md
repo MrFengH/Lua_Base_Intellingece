@@ -181,6 +181,84 @@ dated, with one JSON file per run recording every case's pass/fail status and, f
 the input, the expected value and what the model actually produced. The pass rate is summarised in
 [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) and [MODEL_STRATEGY.md](MODEL_STRATEGY.md).
 
+### Manual walkthrough — duplicate detection, a corroboration run and a conflict run
+
+Moved here from the public README, which now stays a first-read overview. This is a developer/QA
+script, not demo material — see [docs/DEMO.md](DEMO.md) for the judge-facing walkthrough.
+
+The official seed already carries one MR observation for Hospital DemoCare Pacific
+(`seed-customer-democare`): 2 × MR, NovaMed, approximately 7 years old, stored as
+`seed-equipment-01` (workbook row 1). Reporting the same facility again as a fresh capture — the
+way a second field colleague would — exercises the duplicate-scoring rules in
+[Technical decisions](DECISIONS.md) decision 7 against a real comparison instead of an invented
+one. Neither run below changes the 0.65 candidate threshold or the scoring weights in
+`duplicate-detection-service.ts`; they only choose answers that land on either side of it.
+
+**What you will see on screen.** After saving, Customer 360 shows a pending-candidate count and a
+review action. The review panel presents the new observation beside the existing comparable,
+including relationship, score, `duplicate-v1`, the detector's real reason codes, relevant field
+differences and the supporting account. A person can record `NotDuplicate`, `SameEquipment` or
+`CorroboratingEvidence`; the decision moves to resolved history and persists without merging or
+modifying either observation. The interface is in Spanish; the enum values above are the internal
+codes, shown on screen with their Spanish labels (e.g. `SameEquipment` → "Mismo equipo").
+
+Start each run as a **new** capture (do not edit the seeded record), against a freshly seeded
+database if you want the candidate count to match exactly — otherwise the second run's comparables
+also include the first run's saved observation, which still produces a conflict but no longer only
+against `seed-equipment-01`. Type the messages **exactly** as written, including "Panama" with no
+accent — see the caveat below.
+
+**Known trap in the development mock: do not write an accented "Panamá".**
+`DevelopmentMockObservationExtractionService.extractCustomer` looks up the known customer by name,
+then unconditionally overwrites `city`/`country` with whatever it parses from the "en `<place>`"
+phrase in the same sentence, even when a known customer was already matched. The official seed
+stores this facility's country as plain-ASCII `Panama`. Typing "en Panamá" makes the parsed country
+`Panamá` (accented), which no longer equals the seeded `Panama` in `findByNormalizedIdentity`'s
+exact string comparison, so the save creates a **second, unrelated Hospital DemoCare Pacific
+customer record** with no prior equipment — zero comparables, zero duplicate candidates, and no
+"Possible matches detected" banner, even though everything else (facility, modality, quantity,
+brand, age) extracted correctly. It is a pre-existing defect in the development mock, out of scope
+for this walkthrough and not fixed here — worth its own follow-up. Typing the plain-ASCII "Panama"
+below avoids it entirely and is what the seed itself uses.
+
+**Run 1 — corroboration. Stored candidate expected: `seed-equipment-01`, score 0.80, relationship
+`PossibleCorroboration`.**
+
+1. `Estoy en el Hospital DemoCare Pacific, en Panama. Tienen dos resonadores.`
+2. When asked "¿Conoce el fabricante de los equipos de MR?", answer `NovaMed.`
+3. When asked "¿Conoce la antigüedad aproximada de los equipos de MR?", answer `Siete años.`
+4. When asked for the model, choose **Revisar información actual** without answering — the model
+   question is optional and is not required to save.
+5. **Guardar observación**. The app switches to **Customer 360** on Hospital DemoCare Pacific
+   automatically. Open **Revisar posibles coincidencias** and confirm the relationship, score,
+   reasons and both observations.
+
+**Run 2 — conflict. Stored candidate expected: `seed-equipment-01`, score 0.56, relationship
+`PossibleConflict`.**
+
+1. `Estoy en el Hospital DemoCare Pacific, en Panama. Tienen dos resonadores.`
+2. Answer the manufacturer question with `Orion Imaging.`
+3. Answer the age question with `Siete años.`
+4. Review and save as in run 1.
+
+The score comes out lower than the 0.65 candidate threshold in run 2, but the candidate is still
+stored: a manufacturer disagreement marks the pair `PossibleConflict` regardless of the numeric
+score, because a conflict is exactly the case a reviewer must see. Run at least one of the two
+scripts in QVAC mode as well before presenting — the scoring rule is identical under both engines,
+but real-model extraction is not deterministic, so the relationship is the signal to watch and the
+score may vary slightly from the numbers above.
+
+**Resolution check.** Choose one of the three human decisions and then select **Registrar decisión
+humana**. The candidate leaves the pending count and remains visible under **Resueltos**. Close and
+reopen the application to confirm the decision remains there and that both supporting observations
+are still present.
+
+A freshly seeded database, before either run, shows 50 total equipment units on the Dashboard (15
+MR, 12 CT, 23 Ultrasound) — that is the official-seed baseline, not a fixed number the Dashboard
+always shows. Saving both runs above adds two more MR observations on top of it, so a Dashboard
+reading taken after this walkthrough will read higher, and any database that already has its own
+captured observations will read higher still. Both are expected, not a discrepancy.
+
 ## Running everything
 
 ```powershell

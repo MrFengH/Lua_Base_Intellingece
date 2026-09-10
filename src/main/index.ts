@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, session } from 'electron';
 import { createCompositionRoot, type CompositionRoot } from './composition-root';
 import { registerIpcHandlers } from './ipc';
 
@@ -12,7 +12,7 @@ const createWindow = (): BrowserWindow => {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'Installed Base Intelligence',
+    title: 'Lua',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -31,6 +31,11 @@ const createWindow = (): BrowserWindow => {
 };
 
 app.whenReady().then(() => {
+  // Deny-by-default, allow only the one permission voice dictation needs. Electron does not
+  // gate getUserMedia on user consent the way a browser tab does, so the app must decide.
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'media');
+  });
   const requestedMode = process.env.CIB_INFERENCE_MODE;
   const inferenceMode =
     requestedMode === 'qvac' || requestedMode === 'mock' ? requestedMode : undefined;

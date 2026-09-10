@@ -17,6 +17,7 @@ import type {
   SavedObservationAggregate,
 } from '@/domain';
 import {
+  classifyCrossGroupScope,
   classifyObservationBasis,
   classifyObservationBasisAnswer,
   classifyRestatementIntent,
@@ -115,7 +116,7 @@ const resolvedBy = (
 const isUnknownReply = (text: string, question: FollowUpQuestion): boolean => {
   const reply = text.trim();
   return (
-    (/^no[.!?]*$/i.test(reply) && question.text.startsWith('Do you know')) ||
+    (/^no[.!?]*$/i.test(reply) && question.text.startsWith('¿Conoce')) ||
     /^(?:i\s+(?:do\s+not|don't)\s+know|unknown|not\s+sure|no\s+(?:lo\s+)?s[eé]|ni\s+idea(?:\s+la\s+verdad)?|no\s+estoy\s+segur[oa]|no\s+me\s+fij[eé]|no\s+sabr[ií]a\s+decir|desconocid[oa])(?=$|[\s.,;:!?])/i.test(
       reply,
     )
@@ -179,9 +180,13 @@ export class CaptureWorkflowService {
 
   async submitMessage(id: string, text: string): Promise<CaptureSessionView> {
     const session = this.requireSession(id);
-    if (!text.trim()) throw new Error('A capture message cannot be empty.');
-    if (session.draft.state === 'SAVED') throw new Error('Saved evidence is immutable.');
+    if (!text.trim()) throw new Error('El mensaje de captura no puede estar vacío.');
+    if (session.draft.state === 'SAVED') throw new Error('La evidencia guardada es inmutable.');
 
+    // Captured before extraction runs: `advance()` overwrites `session.pendingQuestion` with the
+    // *next* question once this message is processed, so this is the only point that still holds
+    // which question this message is answering.
+    const answeredQuestion = session.pendingQuestion;
     const message: ConversationMessage = {
       id: this.ids.next(),
       role: 'User',
@@ -201,6 +206,7 @@ export class CaptureWorkflowService {
       } else if (session.pendingQuestion && isUnknownReply(text, session.pendingQuestion)) {
         session.draft = this.markPendingUnknown(session.draft, session.pendingQuestion, message.id);
       } else {
+        const intent = classifyRestatementIntent(text);
         const extraction = await this.extractor.extract(text, {
           captureDraft: session.draft,
           pendingQuestion: session.pendingQuestion,
@@ -210,12 +216,16 @@ export class CaptureWorkflowService {
           })),
           knownCustomers: this.repository.list(),
         });
-        session.draft = this.mergeExtraction(
-          session.draft,
-          extraction,
-          message.id,
-          classifyRestatementIntent(text),
-        );
+        session.draft = this.mergeExtraction(session.draft, extraction, message.id, intent);
+        if (answeredQuestion) {
+          session.draft = this.propagateSharedAnswer(
+            session.draft,
+            answeredQuestion,
+            message.id,
+            intent,
+            text,
+          );
+        }
         session.draft = this.applyStatedObservationBasis(session.draft, text, message.id);
       }
       this.advance(session);
@@ -228,14 +238,14 @@ export class CaptureWorkflowService {
 
   correct(id: string, correction: CaptureCorrection): CaptureSessionView {
     const session = this.requireSession(id);
-    if (session.draft.state === 'SAVED') throw new Error('Saved evidence is immutable.');
+    if (session.draft.state === 'SAVED') throw new Error('La evidencia guardada es inmutable.');
     const evidenceId = `correction:${this.ids.next()}`;
     session.corrections.push({
       id: evidenceId,
       sessionId: session.id,
       source: session.source,
       capturedAt: this.clock.now(),
-      rawText: 'Manual correction applied by the observer during review.',
+      rawText: 'Corrección manual aplicada por el observador durante la revisión.',
     });
     let customer = session.draft.customer;
     if (correction.customer) {
@@ -312,10 +322,10 @@ export class CaptureWorkflowService {
     // Reviewing early must not bury a disagreement the observer has not settled. Confirmation
     // would otherwise turn "I am not sure which of the two" into a stored fact.
     if (unresolvedContradictions(session.draft).length > 0) {
-      throw new Error('Answer the contradictory information before reviewing the observation.');
+      throw new Error('Responda la información contradictoria antes de revisar la observación.');
     }
     if (!requiredComplete(session.draft)) {
-      throw new Error('Required capture fields must be answered or declared unknown.');
+      throw new Error('Los campos obligatorios deben responderse o declararse desconocidos.');
     }
     session.pendingQuestion = null;
     session.draft = { ...session.draft, state: 'READY_FOR_REVIEW' };
@@ -330,7 +340,9 @@ export class CaptureWorkflowService {
   confirmReview(id: string): CaptureSessionView {
     const session = this.requireSession(id);
     if (session.draft.state !== 'READY_FOR_REVIEW') {
-      throw new Error('There is nothing to confirm until the observation is ready for review.');
+      throw new Error(
+        'No hay nada que confirmar hasta que la observación esté lista para revisión.',
+      );
     }
     this.recordConfirmation(session);
     return this.view(session);
@@ -339,13 +351,14 @@ export class CaptureWorkflowService {
   save(id: string): { capture: CaptureSessionView; customerId: string } {
     const session = this.requireSession(id);
     if (session.draft.state !== 'READY_FOR_REVIEW') {
-      throw new Error('Review the structured observation before saving it.');
+      throw new Error('Revise la observación estructurada antes de guardarla.');
     }
     if (!session.reviewConfirmed) {
-      throw new Error('Confirm the structured summary before saving it.');
+      throw new Error('Confirme el resumen estructurado antes de guardarlo.');
     }
     const customerName = nullableValue(session.draft.customer.name);
-    if (!customerName) throw new Error('Customer name is required to save an observation.');
+    if (!customerName)
+      throw new Error('El nombre del cliente es obligatorio para guardar una observación.');
 
     const now = this.clock.now();
     const normalizedName = normalizeName(customerName);
@@ -541,6 +554,113 @@ export class CaptureWorkflowService {
       (item, index) => ({ ...item, order: index }),
     );
     return { ...draft, customer, equipment };
+  }
+
+  /**
+   * Fields an explicit cross-group scope answer can be shared across ("NovaMed para ambos").
+   * Deliberately excludes `Modality` and `Quantity`: those are what make two equipment groups
+   * distinct in the first place, so propagating one group's value onto another would erase the
+   * difference between them rather than fill in a gap.
+   */
+  private static readonly SHARED_ANSWER_FIELDS = new Set<FollowUpQuestion['field']>([
+    'Manufacturer',
+    'Model',
+    'ApproximateAge',
+  ]);
+
+  /**
+   * Applies the value just merged into one equipment group to its sibling groups too, when (and
+   * only when) the observer explicitly said the answer covers more than one group. This is a
+   * deterministic, post-extraction step — the extractor itself is never asked to reason about
+   * cross-group scope, and never sees this text differently because of it.
+   *
+   * "Both" claims exactly two groups, so it only ever applies when the draft holds exactly two;
+   * with any other count, which two groups the observer meant is a genuine guess, so nothing is
+   * propagated and the normal per-group follow-up flow continues unchanged. "All" claims the
+   * whole set and carries no such ambiguity, whatever the count.
+   *
+   * Every sibling group is folded through the same three-way merge (`mergeField`) the primary
+   * group already went through, so an existing, different, known value on a sibling group still
+   * raises a contradiction instead of being silently overwritten — this reuses the review flow's
+   * own disagreement handling rather than adding a second one next to it.
+   */
+  private propagateSharedAnswer(
+    draft: CaptureDraft,
+    question: FollowUpQuestion,
+    evidenceId: string,
+    intent: RestatementIntent,
+    text: string,
+  ): CaptureDraft {
+    if (question.target.type !== 'Equipment') return draft;
+    if (!CaptureWorkflowService.SHARED_ANSWER_FIELDS.has(question.field)) return draft;
+    const scope = classifyCrossGroupScope(text);
+    if (scope === null) return draft;
+    if (scope === 'Both' && draft.equipment.length !== 2) return draft;
+
+    const equipmentGroupId = question.target.equipmentGroupId;
+    const primary = draft.equipment.find((item) => item.id === equipmentGroupId);
+    if (!primary) return draft;
+
+    const equipment = draft.equipment.map((item) => {
+      if (item.id === primary.id) return item;
+      return this.applySharedField(item, question.field, primary, evidenceId, intent);
+    });
+    return { ...draft, equipment };
+  }
+
+  /** Shares one already-resolved field from `primary` onto `item`, field-type by field-type. */
+  private applySharedField(
+    item: CaptureEquipmentDraft,
+    field: FollowUpQuestion['field'],
+    primary: CaptureEquipmentDraft,
+    evidenceId: string,
+    intent: RestatementIntent,
+  ): CaptureEquipmentDraft {
+    const contradictions = item.contradictions.filter((entry) => entry.field !== field);
+    const open = item.contradictions.find((entry) => entry.field === field);
+    if (field === 'Manufacturer') {
+      if (primary.manufacturer.state !== 'Known') return item;
+      const manufacturer = this.mergeField(
+        'Manufacturer',
+        item.manufacturer,
+        primary.manufacturer.value,
+        evidenceId,
+        primary.manufacturer.certainty,
+        intent,
+        open,
+        (value) => value,
+        contradictions,
+      );
+      return { ...item, manufacturer, contradictions };
+    }
+    if (field === 'Model') {
+      if (primary.model.state !== 'Known') return item;
+      const model = this.mergeField(
+        'Model',
+        item.model,
+        primary.model.value,
+        evidenceId,
+        primary.model.certainty,
+        intent,
+        open,
+        (value) => value,
+        contradictions,
+      );
+      return { ...item, model, contradictions };
+    }
+    if (primary.approximateAge.state !== 'Known') return item;
+    const approximateAge = this.mergeField(
+      'ApproximateAge',
+      item.approximateAge,
+      primary.approximateAge.value,
+      evidenceId,
+      primary.approximateAge.certainty,
+      intent,
+      open,
+      describeApproximateAge,
+      contradictions,
+    );
+    return { ...item, approximateAge, contradictions };
   }
 
   /**
@@ -818,12 +938,12 @@ export class CaptureWorkflowService {
       sessionId: session.id,
       source: session.source,
       capturedAt: this.clock.now(),
-      rawText: 'The observer confirmed the structured summary before it was saved.',
+      rawText: 'El observador confirmó el resumen estructurado antes de guardarlo.',
     });
     session.messages.push({
       id: this.ids.next(),
       role: 'Assistant',
-      content: 'Thank you. The observation is confirmed and ready to save.',
+      content: 'Gracias. La observación está confirmada y lista para guardar.',
       createdAt: this.clock.now(),
     });
   }
@@ -846,7 +966,7 @@ export class CaptureWorkflowService {
     session.messages.push({
       id: this.ids.next(),
       role: 'Assistant',
-      content: 'Understood, nothing was saved. Tell me what should change, or correct it directly.',
+      content: 'Entendido, no se guardó nada. Dígame qué debe cambiar, o corríjalo directamente.',
       createdAt: this.clock.now(),
     });
     return true;

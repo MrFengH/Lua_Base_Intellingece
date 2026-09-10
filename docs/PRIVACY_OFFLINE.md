@@ -22,8 +22,9 @@ remote prompt, no remote validation.
 
 Verifiable properties today:
 
-- The only AI dependency is `@qvac/sdk`, running a local llama.cpp worker.
-- `@qvac/sdk` is imported in exactly one file, `src/infrastructure/qvac/qvac-observation-extraction.ts`.
+- The only AI dependency is `@qvac/sdk`, running local llama.cpp and whisper.cpp workers.
+- `@qvac/sdk` is imported only under `src/infrastructure/qvac/`: `qvac-observation-extraction.ts`
+  (text) and `qvac-speech-to-text.ts` (voice). No other file in `src/` imports it.
 - No HTTP client or `fetch` call exists anywhere in `src/`.
 - The production renderer CSP permits only `connect-src 'self'`; it carries no development
   WebSocket or external network endpoint. Development alone permits `ws://localhost:*` for the
@@ -33,16 +34,17 @@ Verifiable properties today:
 
 ### OPTIONAL SYNC AND MODEL DOWNLOAD TRAFFIC — narrow and explicit
 
-Exactly one network operation exists: on first initialization, the QVAC model registry may
-download the model artifact to its local cache.
+Only one kind of network operation exists: on first initialization of a given model, the QVAC
+model registry may download that model's artifact to its local cache. There are now two models
+that can each independently trigger this, once each, the first time they are used.
 
-| Property               | Value                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------- |
-| What is sent           | A model request. **No observation data.**                                       |
-| When                   | First initialization only, when the model is not already cached                 |
-| Required for inference | No. Once cached, inference is fully local                                       |
-| How to avoid entirely  | Set `CIB_QVAC_MODEL_PATH` to a locally provisioned GGUF file                    |
-| Size                   | About 365 MiB for the default model. See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) |
+| Property               | Value                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| What is sent           | A model request. **No observation data, ever, for either model.**                                                |
+| When                   | First initialization of a given model only, when it is not already cached                                        |
+| Required for inference | No. Once cached, inference is fully local                                                                        |
+| How to avoid entirely  | Set `CIB_QVAC_MODEL_PATH` (text) or `CIB_QVAC_VOICE_MODEL_PATH` (voice) to a locally provisioned file            |
+| Size                   | ≈365 MiB (default text model) + ≈42 MiB (`WHISPER_TINY_Q8_0`, voice). See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) |
 
 For a genuinely disconnected deployment, provision the model file out of band and set
 `CIB_QVAC_MODEL_PATH`. That path performs no network access at all.
@@ -53,16 +55,16 @@ critical path — see the sync section below.
 
 ## Data that must never leave the device
 
-| Data                              | Where it lives                                               |
-| --------------------------------- | ------------------------------------------------------------ |
-| Raw observation text              | `evidence_items.raw_text`, local SQLite                      |
-| Voice transcripts (**PLANNED**)   | same, as `Voice` evidence                                    |
-| Audio artifacts (**PLANNED**)     | local file referenced by `local_artifact_uri`                |
-| Photos (**PLANNED**)              | same                                                         |
-| Facility names, cities, countries | `customers`, `observation_sessions`                          |
-| Reporter identity                 | `observation_sessions.observer_id`, `observer_display_name`  |
-| Prompts sent to the model         | constructed in memory, never persisted or logged             |
-| Generated tokens                  | drained and discarded; only the validated final JSON is kept |
+| Data                              | Where it lives                                                                                                                                                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Raw observation text              | `evidence_items.raw_text`, local SQLite                                                                                                                                                                                                                                                                      |
+| Voice transcripts                 | Not a distinct category: a transcript is placed into the ordinary text input for review and, once sent, is stored exactly like `Raw observation text` above — no `Voice`-tagged evidence table exists                                                                                                        |
+| Audio artifacts                   | **Deliberately never persisted.** Recorded audio is written to a single-use OS temp file only for the duration of one `transcribe()` call and is always deleted immediately after, success or failure (`src/main/voice-transcription.ts`). There is no `local_artifact_uri` and no setting that changes this |
+| Photos (**PLANNED**)              | same                                                                                                                                                                                                                                                                                                         |
+| Facility names, cities, countries | `customers`, `observation_sessions`                                                                                                                                                                                                                                                                          |
+| Reporter identity                 | `observation_sessions.observer_id`, `observer_display_name`                                                                                                                                                                                                                                                  |
+| Prompts sent to the model         | constructed in memory, never persisted or logged                                                                                                                                                                                                                                                             |
+| Generated tokens                  | drained and discarded; only the validated final JSON is kept                                                                                                                                                                                                                                                 |
 
 ## Local storage
 
@@ -95,18 +97,20 @@ DECISIONS.md, and even then must exclude observation content entirely.
 
 ## Behaviour with no network
 
-| Operation                                      | Works offline                       |
-| ---------------------------------------------- | ----------------------------------- |
-| Application launch                             | yes                                 |
-| Database read and write                        | yes                                 |
-| Text capture                                   | yes                                 |
-| Extraction, model already local                | yes                                 |
-| Follow-up questions, corrections, review, save | yes, all deterministic domain logic |
-| Customer 360 and Dashboard                     | yes                                 |
-| Seed                                           | yes                                 |
-| `npm test`                                     | yes                                 |
-| `npm run qvac:smoke`, model already local      | yes                                 |
-| First model download                           | **no**, this is the one exception   |
+| Operation                                       | Works offline                       |
+| ----------------------------------------------- | ----------------------------------- |
+| Application launch                              | yes                                 |
+| Database read and write                         | yes                                 |
+| Text capture                                    | yes                                 |
+| Extraction, model already local                 | yes                                 |
+| Voice dictation, model already local            | yes                                 |
+| Follow-up questions, corrections, review, save  | yes, all deterministic domain logic |
+| Customer 360 and Dashboard                      | yes                                 |
+| Seed                                            | yes                                 |
+| `npm test`                                      | yes                                 |
+| `npm run qvac:smoke`, model already local       | yes                                 |
+| `npm run qvac:voice-smoke`, model already local | yes                                 |
+| First download of either model                  | **no**, this is the one exception   |
 
 There is no degraded mode and no silent fallback. If QVAC cannot start or the model cannot
 load, the user sees an error with the real state. The engine badge always names the engine that
@@ -154,3 +158,9 @@ If consolidating observations across colleagues is ever required, these constrai
 
 Use the `offline-validation` skill. It has the static scan commands, the airplane-mode
 procedure, and the pass criteria.
+
+The pre-demo human checklist — physical network disconnection, full capture-to-save flow, Customer
+360 and Dashboard checks — lives in
+[docs/DEMO.md](DEMO.md#checklist-de-validación-offline--validación-humana-requerida) and is marked
+**HUMAN VALIDATION REQUIRED** until a person has executed and checked it off. No agent session has
+performed a physical airplane-mode run.

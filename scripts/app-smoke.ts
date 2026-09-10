@@ -197,7 +197,9 @@ const waitForProbe = async (
             apiType: typeof api,
             methodType: typeof api?.getInferenceStatus,
             rootChildren: document.querySelector('#root')?.childElementCount ?? 0,
-            rendered: document.body.innerText.includes('Turn field notes into traceable evidence.'),
+            rendered: document.body.innerText.includes(
+              'Convierta notas de campo en evidencia trazable.',
+            ),
             statusOk: status?.ok === true,
             engine: status?.ok ? status.data.engine : null,
             runtimeStatus: status?.ok ? status.data.status : null,

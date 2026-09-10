@@ -10,6 +10,10 @@ import type { ExtractionContext } from '@/application';
 const sdk = vi.hoisted(() => {
   const FAKE_QWEN3_600M_INST_Q4 = { name: 'QWEN3_600M_INST_Q4', engine: 'llamacpp-completion' };
   const FAKE_QWEN3_1_7B_INST_Q4 = { name: 'QWEN3_1_7B_INST_Q4', engine: 'llamacpp-completion' };
+  const FAKE_QWEN3_4B_INST_Q4_K_M = {
+    name: 'QWEN3_4B_INST_Q4_K_M',
+    engine: 'llamacpp-completion',
+  };
   class FakeInferenceCancelledError extends Error {
     readonly requestId: string;
     constructor(requestId: string) {
@@ -21,6 +25,7 @@ const sdk = vi.hoisted(() => {
   return {
     FAKE_QWEN3_600M_INST_Q4,
     FAKE_QWEN3_1_7B_INST_Q4,
+    FAKE_QWEN3_4B_INST_Q4_K_M,
     FakeInferenceCancelledError,
     heartbeat: vi.fn(async () => undefined),
     loadModel: vi.fn(async () => 'loaded-model-1'),
@@ -41,6 +46,7 @@ vi.mock('@qvac/sdk', () => ({
   unloadModel: sdk.unloadModel,
   QWEN3_600M_INST_Q4: sdk.FAKE_QWEN3_600M_INST_Q4,
   QWEN3_1_7B_INST_Q4: sdk.FAKE_QWEN3_1_7B_INST_Q4,
+  QWEN3_4B_INST_Q4_K_M: sdk.FAKE_QWEN3_4B_INST_Q4_K_M,
 }));
 
 const { QvacObservationExtractionService } = await import('@/infrastructure');
@@ -103,6 +109,17 @@ describe('QvacObservationExtractionService: model selection and configuration', 
       expect.objectContaining({ modelSrc: sdk.FAKE_QWEN3_1_7B_INST_Q4 }),
     );
     expect(service.getRuntimeInfo().model).toBe('QWEN3_1_7B_INST_Q4');
+  });
+
+  it('loads the 4B registry model when configured, symmetric with the 1.7B branch', async () => {
+    const service = new QvacObservationExtractionService({
+      modelDescriptor: sdk.FAKE_QWEN3_4B_INST_Q4_K_M as never,
+    });
+    await service.initialize();
+    expect(sdk.loadModel).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSrc: sdk.FAKE_QWEN3_4B_INST_Q4_K_M }),
+    );
+    expect(service.getRuntimeInfo().model).toBe('QWEN3_4B_INST_Q4_K_M');
   });
 
   it('prefers a local modelPath over the registry, as an explicit llamacpp-completion source', async () => {

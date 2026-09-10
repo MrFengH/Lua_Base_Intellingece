@@ -12,7 +12,7 @@ const fieldText = <T>(
   if (field.state === 'DeclaredUnknown') return unknownLabel;
   if (field.state === 'Missing') return missingLabel;
   return field.certainty === 'Uncertain'
-    ? `${format(field.value)} (uncertain)`
+    ? `${format(field.value)} (incierto)`
     : format(field.value);
 };
 
@@ -20,22 +20,27 @@ const groupText = (equipment: CaptureEquipmentDraft): string => {
   const quantity = fieldText(
     equipment.quantity,
     (value) => String(value),
-    'an unknown number of',
-    'some',
+    'una cantidad desconocida de',
+    'algunos',
   );
   const modality = fieldText(
     equipment.modality,
     (value) => value,
-    'unknown modality',
-    'unknown modality',
+    'modalidad desconocida',
+    'modalidad desconocida',
   );
   const manufacturer = fieldText(
     equipment.manufacturer,
     (value) => value,
-    'brand unknown',
-    'brand not stated',
+    'marca desconocida',
+    'marca no indicada',
   );
-  const age = fieldText(equipment.approximateAge, ageText, 'age unknown', 'age not stated');
+  const age = fieldText(
+    equipment.approximateAge,
+    ageText,
+    'antigüedad desconocida',
+    'antigüedad no indicada',
+  );
   return `${quantity} ${modality}, ${manufacturer}, ${age}`;
 };
 
@@ -43,29 +48,34 @@ const facilityText = (draft: CaptureDraft): string => {
   const name = fieldText(
     draft.customer.name,
     (value) => value,
-    'an unnamed facility',
-    'a facility',
+    'una instalación sin nombre',
+    'una instalación',
   );
-  const city = fieldText(draft.customer.city, (value) => value, 'unknown city', 'unknown city');
+  const city = fieldText(
+    draft.customer.city,
+    (value) => value,
+    'ciudad desconocida',
+    'ciudad desconocida',
+  );
   const country = fieldText(
     draft.customer.country,
     (value) => value,
-    'unknown country',
-    'unknown country',
+    'país desconocido',
+    'país desconocido',
   );
   return `${name}, ${city}, ${country}`;
 };
 
 const BASIS_TEXT = {
-  DirectObservation: 'You saw this equipment yourself.',
-  ReportedByOther: 'This was reported to you by someone else.',
-  Estimate: 'This is your estimate.',
+  DirectObservation: 'Usted vio este equipo directamente.',
+  ReportedByOther: 'Esto le fue reportado por otra persona.',
+  Estimate: 'Esto es una estimación suya.',
 } as const;
 
 const basisText = (draft: CaptureDraft): string | null => {
   if (draft.observationBasis.state === 'Known') return BASIS_TEXT[draft.observationBasis.value];
   if (draft.observationBasis.state === 'DeclaredUnknown')
-    return 'How this was observed was left unknown.';
+    return 'La forma en que se observó esto quedó sin especificar.';
   return null;
 };
 
@@ -77,12 +87,12 @@ const basisText = (draft: CaptureDraft): string | null => {
 export class ReviewSummaryService {
   summarize(draft: CaptureDraft): string {
     const groups = draft.equipment.map(groupText);
-    const equipment = groups.length > 0 ? groups.join('; ') : 'no equipment yet';
+    const equipment = groups.length > 0 ? groups.join('; ') : 'sin equipos todavía';
     const basis = basisText(draft);
     const sentences = [
-      `I captured ${facilityText(draft)}: ${equipment}.`,
+      `Registré ${facilityText(draft)}: ${equipment}.`,
       ...(basis === null ? [] : [basis]),
-      'Is that correct?',
+      '¿Es correcto?',
     ];
     return sentences.join(' ');
   }

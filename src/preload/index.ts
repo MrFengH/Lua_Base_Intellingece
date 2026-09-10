@@ -18,6 +18,7 @@ const api: InstalledBaseApi = {
   resolveDuplicateCandidate: (candidateId, resolution) =>
     ipcRenderer.invoke(IPC_CHANNELS.duplicateResolve, { candidateId, resolution }),
   getDashboard: () => ipcRenderer.invoke(IPC_CHANNELS.dashboard),
+  transcribeVoice: (audio) => ipcRenderer.invoke(IPC_CHANNELS.voiceTranscribe, { audio }),
 };
 
 contextBridge.exposeInMainWorld('installedBaseApi', api);

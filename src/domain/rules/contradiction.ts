@@ -36,11 +36,11 @@ export const classifyRestatementIntent = (text: string): RestatementIntent => {
 
 /** Human-readable form of an age, used when a contradiction has to name both values. */
 export const describeApproximateAge = (age: ApproximateAge): string => {
-  if (age.type === 'unknown') return 'age unknown';
+  if (age.type === 'unknown') return 'antigüedad desconocida';
   if (age.type === 'qualitative') return age.label;
-  if (age.type === 'exact') return `${age.years} years`;
-  if (age.minYears === age.maxYears) return `approx. ${age.minYears} years`;
-  return `${age.minYears}-${age.maxYears} years`;
+  if (age.type === 'exact') return `${age.years} años`;
+  if (age.minYears === age.maxYears) return `aprox. ${age.minYears} años`;
+  return `${age.minYears}-${age.maxYears} años`;
 };
 
 const sameAge = (left: ApproximateAge, right: ApproximateAge): boolean => {
@@ -74,11 +74,11 @@ export const sameFieldValue = (left: unknown, right: unknown): boolean => {
 };
 
 const FIELD_LABEL: Readonly<Record<ContradictionField, string>> = {
-  Modality: 'modality',
-  Quantity: 'quantity',
-  Manufacturer: 'manufacturer',
-  Model: 'model',
-  ApproximateAge: 'age',
+  Modality: 'modalidad',
+  Quantity: 'cantidad',
+  Manufacturer: 'fabricante',
+  Model: 'modelo',
+  ApproximateAge: 'antigüedad',
 };
 
 export const contradictionFieldLabel = (field: ContradictionField): string => FIELD_LABEL[field];
@@ -91,5 +91,5 @@ export const contradictionQuestionText = (
   contradiction: FieldContradiction,
   equipmentLabel: string,
 ): string =>
-  `Earlier you said the ${FIELD_LABEL[contradiction.field]} of the ${equipmentLabel} systems was ` +
-  `${contradiction.previousText}, and then ${contradiction.currentText}. Which one should I keep?`;
+  `Antes dijo que la "${FIELD_LABEL[contradiction.field]}" de los equipos de ${equipmentLabel} ` +
+  `era ${contradiction.previousText}, y luego dijo ${contradiction.currentText}. ¿Cuál debo conservar?`;

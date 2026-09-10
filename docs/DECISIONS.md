@@ -306,3 +306,81 @@ observations across saved sessions and is not involved.
 **Status:** Accepted, implemented in `P3-S6`. A restated modality is out of reach of the extraction
 merge, because extraction groups equipment by modality; that correction goes through the review
 correction path, which preserves the earlier evidence ids in the same way.
+
+## 18. `QWEN3_4B_INST_Q4_K_M` is the recommended demo configuration; the production default stays `QWEN3_600M_INST_Q4`
+
+**Context:** `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, referenced from the
+2026-09-10 addendum in `docs/MODEL_STRATEGY.md`, measured `QWEN3_4B_INST_Q4_K_M` at 82.6% overall
+field accuracy against `extraction-corpus-v1` (EN 84.7%, ES 76.7%, adversarial 82.4%, 11
+fabricated values, 7/30 full-pass) — materially better than the 43.8–49.8% recorded for the
+production default `QWEN3_600M_INST_Q4` across its own runs. A human approved `QWEN3_4B_INST_Q4_K_M`
+as the recommended, documented configuration for the upcoming demo.
+
+**Decision:** `QvacObservationExtractionService`'s `QvacModelDescriptor` union and its re-exports
+now include `QWEN3_4B_INST_Q4_K_M`, and `src/main/composition-root.ts` reads an explicit
+`CIB_QVAC_MODEL` environment variable (`600m` or `4b`, unrecognized values fail loudly) to select
+it. **The global/production default, used by `npm run dev`, `npm test`, and any run that leaves
+`CIB_QVAC_MODEL` unset, remains `QWEN3_600M_INST_Q4`.** `QWEN3_600M_INST_Q4` remains available and
+documented as a fast fallback for the demo itself, selected the same way with `CIB_QVAC_MODEL=600m`.
+
+**Reason:** Switching the global default this close to the demo would destabilize dev and test
+workflows that were not built or measured against the 4B model's load time and latency (162,579 ms
+load, up to 17,013 ms per-case latency in the earlier comparison run in `PERFORMANCE_BUDGETS.md`).
+Making the demo's model choice an explicit, documented environment variable gets the measured
+quality improvement into the demo without touching the default anyone else's workflow relies on.
+
+**Consequences:** There is still no cloud fallback; `@qvac/sdk` remains the only inference runtime
+in either configuration. The demo presenter must set `CIB_QVAC_MODEL=4b` deliberately — see the
+[README](../README.md#selecting-the-demo-model) — or the application silently runs the 600M
+default, which is correct behaviour, not a defect, but worth knowing before presenting. The prompt,
+schema, and model tuning are untouched; `QWEN3_4B_INST_Q4_K_M` still fails 23/30 corpus cases and
+never emits `Uncertain`, so this is a demo-configuration decision, not a claim that the quality bar
+in `docs/TESTING.md` is met.
+
+**Status:** Accepted (human decision, 2026-09-10), implemented.
+
+## 19. Voice dictation implemented via QVAC's whisper engine; `WHISPER_TINY_Q8_0` selected; RAM coexistence with the completion model left unmeasured
+
+**Context:** `docs/MODEL_STRATEGY.md`'s Capability 2 ("Speech to text") had stood as PLANNED since
+`SpeechToTextPort` was stubbed. The feature request was to let a field colleague dictate an
+observation, transcribe it locally through `@qvac/sdk`, and place the transcript into the
+existing text input for review — never auto-submitted, no change to the existing text
+capture/extraction workflow.
+
+**Decision:** `SpeechToTextPort` was implemented, not just stubbed: it now mirrors
+`ObservationExtractionPort`'s lifecycle (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
+`QvacSpeechToTextService` (`src/infrastructure/qvac/qvac-speech-to-text.ts`) implements it against
+`@qvac/sdk`'s `transcribe()`/`loadModel()`/`unloadModel()`, selecting `WHISPER_TINY_Q8_0`
+(≈42 MiB) — the smallest **multilingual** candidate in the registry, over the smaller-in-name but
+Spanish-only `WHISPER_SPANISH_TINY_Q8_0`, because this product's own positioning requires Spanish
+_and_ English input. `language: 'auto'` and `translate: false` are set explicitly so the
+transcript stays in whatever language was actually spoken. `DevelopmentMockSpeechToTextService`
+mirrors the extraction capability's mock/production split for `npm run dev` / `npm test` /
+`npm run app:smoke`. The renderer records via `MediaRecorder` + `getUserMedia`, decodes the result
+with `AudioContext.decodeAudioData`, and re-encodes it as 16-bit PCM WAV (`src/renderer/src/audio/wav-encoder.ts`) before sending it over IPC — MediaRecorder's own webm/opus output is not among
+QVAC's `SUPPORTED_AUDIO_FORMATS`. `src/main/voice-transcription.ts` writes that buffer to a
+single-use OS temp file only for the duration of the transcription call and always deletes it
+afterward; no raw audio is ever persisted. The transcript is appended into the existing text
+`<textarea>` for the observer to review/edit; nothing is auto-submitted, and the Send flow,
+extraction prompt, schema, and model are all untouched.
+
+**Reason:** Voice is the natural capture mode for someone walking a hospital corridor, and the
+port already existed as a named placeholder for exactly this. Reusing the existing
+`ObservationExtractionPort` lifecycle shape (rather than inventing a new one) keeps both
+capabilities symmetric and equally testable. Deriving WAV from the browser's own decode of its own
+recording avoids adding an audio-transcoding dependency (e.g. ffmpeg) purely to satisfy QVAC's
+supported-format list.
+
+**Consequences:** Two independent adapters now each call `heartbeat()`, `loadModel`, and
+`unloadModel`, which `docs/QVAC_ARCHITECTURE.md` had already flagged as the trigger for building a
+shared `QvacRuntime` — not built here, to avoid mixing a refactor into a feature change. If a
+session uses voice while the completion model is already loaded, both models are resident until
+disposal; this RAM-coexistence cost has **not been measured**, and `docs/MODEL_STRATEGY.md`
+records it as an open question rather than a resolved one. No word-error-rate measurement exists
+either; `npm run qvac:voice-smoke` proves the pipeline runs on real hardware, not that
+transcription is accurate. `docs/PRIVACY_OFFLINE.md`'s "Audio artifacts" stays marked as never
+persisted (by design, not by omission), and its "Voice transcripts" row was corrected to note that
+a transcript is not a distinct evidence category — it becomes ordinary text once sent.
+
+**Status:** Accepted, implemented. Quality bar (WER) and RAM-coexistence measurement remain open,
+tracked in `docs/MODEL_STRATEGY.md`.

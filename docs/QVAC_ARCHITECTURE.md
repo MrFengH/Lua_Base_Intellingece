@@ -12,25 +12,32 @@ see [QVAC_COMPLIANCE.md](QVAC_COMPLIANCE.md). For the overall system shape see
 flowchart TB
   R[Renderer<br/>React] -->|typed preload| I[IPC handlers<br/>Zod validated]
   I --> W[CaptureWorkflowService<br/>application]
+  I --> VT[voice-transcription.ts<br/>main, temp-file lifecycle only]
   W --> P[[ObservationExtractionPort<br/>application/ports]]
+  VT --> ST[[SpeechToTextPort<br/>application/ports]]
   P -. implemented by .-> Q[QvacObservationExtractionService<br/>infrastructure/qvac]
   P -. implemented by .-> M[DevelopmentMockObservationExtractionService<br/>infrastructure/mock]
+  ST -. implemented by .-> QS[QvacSpeechToTextService<br/>infrastructure/qvac]
+  ST -. implemented by .-> MS[DevelopmentMockSpeechToTextService<br/>infrastructure/mock]
   Q --> SDK([&#64;qvac/sdk])
+  QS --> SDK
   W --> D[Domain rules]
 
   style Q fill:#fff3cd,stroke:#856404
+  style QS fill:#fff3cd,stroke:#856404
   style SDK fill:#f8d7da,stroke:#721c24
 ```
 
 **Only `src/infrastructure/qvac/**` may import `@qvac/sdk`.** Everything above it depends on
-`ObservationExtractionPort`. This is the rule that makes the mock, the tests, and any future
-engine possible, and it is checked by the `qvac-review` skill.
+`ObservationExtractionPort` or `SpeechToTextPort`. This is the rule that makes the mock, the
+tests, and any future engine possible, and it is checked by the `qvac-review` skill.
 
 A quick audit:
 
 ```bash
 grep -rln "@qvac/sdk" src/
-# expected: only src/infrastructure/qvac/qvac-observation-extraction.ts
+# expected: only files under src/infrastructure/qvac/
+#   (qvac-observation-extraction.ts and qvac-speech-to-text.ts as of the voice capability)
 ```
 
 ## Composition
@@ -113,24 +120,34 @@ wants extracted, not how a particular engine is called. Swapping engines must no
 
 ## Adding a new QVAC capability
 
-Voice capture is the expected next one. The shape to follow:
+Voice capture (speech to text) followed this shape and is now implemented:
 
-1. A port in `src/application/ports/`. `SpeechToTextPort` already exists as a stub in
-   `platform.ts` and is currently unimplemented — **PLANNED**.
-2. An adapter in `src/infrastructure/qvac/` implementing it.
-3. The plugin the engine needs added to `qvac.config.json`, and only that plugin.
-4. Its own model lifecycle, with its own status reporting, coexisting with the completion model
-   only if the memory cost has been measured.
+1. A port in `src/application/ports/`. `SpeechToTextPort` (`platform.ts`) mirrors
+   `ObservationExtractionPort`'s lifecycle (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
+2. An adapter in `src/infrastructure/qvac/qvac-speech-to-text.ts` implementing it, plus
+   `DevelopmentMockSpeechToTextService` in `src/infrastructure/mock/` for dev/test parity with the
+   extraction capability.
+3. The plugin the engine needs, `@qvac/sdk/whispercpp-transcription/plugin`, added to
+   `qvac.config.json` alongside the existing completion plugin — no other plugin was enabled.
+4. Its own model lifecycle: loaded lazily on first use rather than eagerly, unloaded on
+   application disposal. **Not yet satisfied:** coexistence with the completion model has not
+   been measured for RAM — see `docs/MODEL_STRATEGY.md`'s Capability 2 "Open questions".
 
-Follow the `qvac-feature` skill. Do not add a second direct SDK call site elsewhere in the app.
+The next capability should follow the same shape. Do not add a second direct SDK call site
+elsewhere in the app.
 
 ## Recommendation, not yet implemented
 
-**PLANNED — a shared QVAC runtime owner.** Today one adapter owns `heartbeat()`,
-`loadModel`, and `unloadModel`. When a second capability arrives, two adapters will each try to
-manage runtime and model state independently. The recommended shape is a small
-`QvacRuntime` object in `src/infrastructure/qvac/` that owns worker startup, a registry of
-loaded model ids, and disposal, with each capability adapter borrowing a model from it.
+**PLANNED — a shared QVAC runtime owner.** The second capability has now arrived:
+`QvacObservationExtractionService` and `QvacSpeechToTextService` each independently call
+`heartbeat()`, `loadModel`, and `unloadModel`, exactly the duplication this section anticipated.
+`heartbeat()` itself is idempotent (it starts-or-verifies one worker), so this is not currently a
+correctness bug, but model residency is now tracked in two places with no shared view — which is
+also why the RAM-coexistence question in `docs/MODEL_STRATEGY.md` remains open. The recommended
+shape is still a small `QvacRuntime` object in `src/infrastructure/qvac/` that owns worker
+startup, a registry of loaded model ids, and disposal, with each capability adapter borrowing a
+model from it.
 
-This is not implemented in this change and should not be built until the second capability
-actually exists. Building it now would be speculative abstraction over one caller.
+This was not built as part of adding voice: doing so would have mixed a refactor into a feature
+change. Build it the next time a third capability is added, or sooner if the RAM question above
+is measured and turns out to require coordinated unloading.

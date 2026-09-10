@@ -51,6 +51,7 @@ export const CorrectionRequestSchema = z
   })
   .strict();
 export const CustomerRequestSchema = z.object({ customerId: z.string().min(1) }).strict();
+export const TranscribeVoiceRequestSchema = z.object({ audio: z.instanceof(Uint8Array) }).strict();
 export const DuplicateResolutionRequestSchema = z
   .object({
     candidateId: z.string().min(1),
@@ -86,4 +87,7 @@ export interface InstalledBaseApi {
     resolution: ResolvedDuplicateResolution,
   ): Promise<IpcResult<{ candidateId: string; resolution: ResolvedDuplicateResolution }>>;
   getDashboard(): Promise<IpcResult<DashboardView>>;
+  /** Transcribes local microphone audio (a WAV byte buffer) via QVAC and returns plain text —
+   * never auto-submitted; the caller places it into the existing text input for review. */
+  transcribeVoice(audio: Uint8Array): Promise<IpcResult<{ text: string }>>;
 }

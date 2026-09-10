@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Offline-first installed-base evidence capture prototype powered by QVAC.",
+  "description": "Lua — offline-first installed-base evidence capture prototype powered by QVAC.",
   "main": "./dist/main/index.js",
   "engines": {
     "node": ">=24.20.0",
@@ -22,6 +22,7 @@
     "seed": "tsx scripts/seed.ts",
     "app:smoke": "npm run build && tsx scripts/app-smoke.ts",
     "qvac:smoke": "tsx scripts/qvac-smoke.ts",
+    "qvac:voice-smoke": "tsx scripts/qvac-voice-smoke.ts",
     "corpus:eval": "tsx scripts/qvac-corpus-eval.ts",
     "sqlite:smoke": "tsx scripts/sqlite-smoke.ts"
   },

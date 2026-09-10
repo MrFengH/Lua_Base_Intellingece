@@ -132,42 +132,91 @@ remains `QWEN3_600M_INST_Q4`; fallback and lifecycle are unchanged. Full metrics
 failures are recorded in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) and the three separate
 JSON reports under `docs/qvac-eval-runs/`.
 
-## Capability 2 — Speech to text (PLANNED, not implemented)
+### 2026-09-10 — `QWEN3_4B_INST_Q4_K_M` approved for the demo; production default unchanged
+
+A later corpus run, `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, scored
+`QWEN3_4B_INST_Q4_K_M` again on the same `extraction-corpus-v1` and measured **82.6% overall field
+accuracy (238/288 fields), 7/30 full-pass cases, EN 84.7% (182/215), ES 76.7% (56/73), adversarial
+82.4% (61/74), and 11 fabricated values** — materially higher than both the 63.4% recorded for this
+model in the comparison above and the 43.8–49.8% recorded for `QWEN3_600M_INST_Q4` across its own
+runs. A human reviewed this result and approved `QWEN3_4B_INST_Q4_K_M` as the recommended,
+documented model configuration for the upcoming demo.
+
+**This is a demo-configuration decision, not a change to the production default.** The global
+default read when `CIB_QVAC_MODEL` is unset — used by `npm run dev`, `npm test`, and
+`npm run corpus:eval`'s own default — remains `QWEN3_600M_INST_Q4`, unchanged. `CIB_QVAC_MODEL=4b`
+opts a run into the demo model explicitly; `CIB_QVAC_MODEL=600m` selects the documented fast
+fallback the same way. See decision 18 in [DECISIONS.md](DECISIONS.md) and the
+[README](../README.md#selecting-the-demo-model) for the mechanism. `QWEN3_4B_INST_Q4_K_M` still
+does not meet the stated quality bar — 23 of 30 cases fail and `Uncertain` is still never emitted —
+so this remains an approved demo configuration, not a claim that escalation is complete or that the
+quality bar in [TESTING.md](TESTING.md) is met. No prompt, schema, or model-tuning change was made
+to produce this number or in response to it.
+
+## Capability 2 — Speech to text (implemented, push-to-talk)
 
 Voice is the natural capture mode for someone walking a hospital corridor. `SpeechToTextPort`
-exists as a stub in `src/application/ports/platform.ts` and `EvidenceSource` already includes
-`Voice`, but no adapter exists.
+(`src/application/ports/platform.ts`) now has a real adapter, `QvacSpeechToTextService`
+(`src/infrastructure/qvac/qvac-speech-to-text.ts`), plus a `DevelopmentMockSpeechToTextService`
+mirroring the extraction capability's mock/production split. `EvidenceSource` already included
+`Voice`; this capability only produces a transcript for the _existing_ text input — it does not
+change what gets saved or how (see "What this does not change" below).
 
-|                 |                                                                                                                                           |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Purpose**     | Audio to text, which then feeds the existing extraction pipeline unchanged                                                                |
-| **Model type**  | Whisper-family ASR                                                                                                                        |
-| **QVAC plugin** | `@qvac/sdk/whispercpp-transcription/plugin` — **not yet enabled**                                                                         |
-| **SDK command** | `transcribe({ modelId, audioChunk, prompt?, metadata? })`, verified in `node_modules/@qvac/inference/dist/api/transcribe.d.ts`            |
-| **Languages**   | Spanish first; English second                                                                                                             |
-| **Fallback**    | Text capture, which already works and stays the primary path                                                                              |
-| **Lifecycle**   | Load on entering voice capture, unload on leaving it. Must not stay resident alongside the completion model without a measured RAM figure |
+|                    |                                                                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Purpose**        | Audio to text, placed into the existing text input for the observer to review/edit — never auto-submitted, and feeding the same extraction pipeline unchanged                                                   |
+| **Model type**     | Whisper-family ASR                                                                                                                                                                                              |
+| **QVAC plugin**    | `@qvac/sdk/whispercpp-transcription/plugin`, enabled in `qvac.config.json`                                                                                                                                      |
+| **SDK command**    | `transcribe({ modelId, audioChunk, prompt?, metadata? })`, verified in `node_modules/@qvac/inference/dist/api/transcribe.d.ts`                                                                                  |
+| **Selected model** | `WHISPER_TINY_Q8_0` (`ggml-tiny-q8_0.bin`) — see "Why `WHISPER_TINY_Q8_0`" below                                                                                                                                |
+| **Size**           | 43,537,433 B ≈ 42 MiB                                                                                                                                                                                           |
+| **Languages**      | `language: 'auto'`, `translate: false` — auto-detects between the observer's two working languages (Spanish, English) and never translates, so the transcript stays in the words actually spoken                |
+| **Fallback**       | Text capture, which already works and stays the primary path; a transcription failure surfaces an error and leaves the text input exactly as it was                                                             |
+| **Lifecycle**      | Loaded lazily on the first `transcribe()` call in a session (no separate "initialize voice" action — push-to-talk is one user action, not two), unloaded on application disposal alongside the completion model |
 
-### Candidate models, smallest first
+### Why `WHISPER_TINY_Q8_0`
 
-| Constant                    | Artifact                      | Size                    | Notes                                |
-| --------------------------- | ----------------------------- | ----------------------- | ------------------------------------ |
-| `WHISPER_SPANISH_TINY_Q8_0` | `es-tiny-ggml-model-q8_0.bin` | 43,537,433 B ≈ 42 MiB   | Spanish-specialised tiny; start here |
-| `WHISPER_TINY_Q8_0`         | `tiny_acft_q8_0.bin`          | 43,537,450 B ≈ 42 MiB   | Multilingual tiny                    |
-| `WHISPER_BASE_Q8_0`         | `ggml-base-q8_0.bin`          | 81,768,585 B ≈ 78 MiB   | Next step up                         |
-| `WHISPER_SMALL_Q8_0`        | small q8_0                    | 264,464,607 B ≈ 252 MiB | Only with measured evidence          |
+The smallest **multilingual** candidate in the table below. `WHISPER_SPANISH_TINY_Q8_0` was not
+selected: this product's own positioning is bilingual capture ("Spanish and English input
+required" — see Capability 1 above), and a Spanish-only model would silently fail or mistranscribe
+an English observation. Multilingual auto-detection is the smaller compromise.
 
-**Recommended starting point:** `WHISPER_SPANISH_TINY_Q8_0` if the deployment is
-Spanish-first, otherwise `WHISPER_TINY_Q8_0`. Both are under 45 MiB, which is a rounding error
-next to the 365 MiB completion model.
+| Constant                    | Artifact                      | Size                    | Notes                                          |
+| --------------------------- | ----------------------------- | ----------------------- | ---------------------------------------------- |
+| `WHISPER_SPANISH_TINY_Q8_0` | `es-tiny-ggml-model-q8_0.bin` | 43,537,433 B ≈ 42 MiB   | Spanish-only; not selected (bilingual product) |
+| **`WHISPER_TINY_Q8_0`**     | `ggml-tiny-q8_0.bin`          | 43,537,433 B ≈ 42 MiB   | **Selected** — multilingual tiny               |
+| `WHISPER_BASE_Q8_0`         | `ggml-base-q8_0.bin`          | 81,768,585 B ≈ 78 MiB   | Escalation candidate, not measured             |
+| `WHISPER_SMALL_Q8_0`        | small q8_0                    | 264,464,607 B ≈ 252 MiB | Only with measured evidence                    |
 
-Open question — **TBD**: whether one multilingual model or a per-language model is right. That
-depends on whether field colleagues switch languages mid-sentence, which nobody has confirmed.
+Both `WHISPER_TINY_Q8_0` and `WHISPER_SPANISH_TINY_Q8_0` are ≈42 MiB, a rounding error next to the
+365 MiB completion model — the size difference did not drive this choice; multilingual coverage
+did.
 
-**Quality bar to define before implementing — TBD.** Word error rate on hospital vocabulary
-(manufacturer names, modality words) matters far more than general WER, because the extraction
-step downstream can recover from ordinary transcription noise but not from "NovaMed" becoming
-"seamless". Build a small held-out audio set before choosing.
+### What this does not change
+
+- The extraction model, prompt, and schema (Capability 1) are untouched — a transcript is just
+  text, indistinguishable to the extraction pipeline from anything typed.
+- Nothing is auto-submitted. The transcript lands in the same `<textarea>` the observer already
+  reviews and edits before pressing Send.
+- No raw audio is persisted. `src/main/voice-transcription.ts` writes the recorded bytes to a
+  single-use OS temp directory only for the duration of the `transcribe()` call and always removes
+  it afterward, success or failure. `docs/PRIVACY_OFFLINE.md`'s "Audio artifacts" row stays
+  **PLANNED** (not implemented) because of this — there is no `local_artifact_uri` to persist yet.
+
+### Open questions — **TBD**, not resolved by this implementation
+
+- **RAM with two models resident.** `docs/QVAC_ARCHITECTURE.md`'s "one model at a time... a second
+  resident model needs a measured RAM figure" is not satisfied here: if voice is used in a session
+  where the completion model is already loaded, both are resident until disposal. Lazy-load and
+  eventual disposal bound this, but no measurement exists. Do not add a second always-resident
+  model without measuring this first.
+- **Quality bar.** No word-error-rate measurement exists against hospital vocabulary
+  (manufacturer names, modality words), and none is claimed. `npm run qvac:voice-smoke` (see
+  README) proves the pipeline runs end to end on real hardware; it does not prove transcription
+  accuracy. Build a small held-out audio set before making any WER claim.
+- **Disk footprint.** ~42 MiB for the model artifact, cached the same way as the completion model
+  (see "Model lifecycle policy" below); temp WAV files are transient (typically well under 1 MiB
+  for a short dictated observation) and deleted immediately after each transcription.
 
 ## Capabilities deliberately not adopted
 

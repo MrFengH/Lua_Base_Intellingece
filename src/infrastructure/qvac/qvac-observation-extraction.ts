@@ -7,6 +7,7 @@ import {
   InferenceCancelledError,
   loadModel,
   QWEN3_1_7B_INST_Q4,
+  QWEN3_4B_INST_Q4_K_M,
   QWEN3_600M_INST_Q4,
   unloadModel,
 } from '@qvac/sdk';
@@ -16,7 +17,7 @@ import {
  * can select a `modelDescriptor` below without importing `@qvac/sdk` directly, which `AGENTS.md`
  * reserves for this directory.
  */
-export { QWEN3_1_7B_INST_Q4, QWEN3_600M_INST_Q4 };
+export { QWEN3_1_7B_INST_Q4, QWEN3_4B_INST_Q4_K_M, QWEN3_600M_INST_Q4 };
 import {
   InferenceRuntimeInfoSchema,
   ObservationExtractionSchema,
@@ -120,19 +121,22 @@ const normalizeExtraction = (extraction: ObservationExtraction): ObservationExtr
 });
 
 /**
- * A model registry descriptor from `@qvac/sdk`'s catalog, e.g. `QWEN3_600M_INST_Q4` or
- * `QWEN3_1_7B_INST_Q4`. Passed straight through to `loadModel`'s "load from descriptor" overload,
- * which infers `modelType` from it — the same mechanism already used for the default model.
+ * A model registry descriptor from `@qvac/sdk`'s catalog, e.g. `QWEN3_600M_INST_Q4`,
+ * `QWEN3_1_7B_INST_Q4`, or `QWEN3_4B_INST_Q4_K_M`. Passed straight through to `loadModel`'s
+ * "load from descriptor" overload, which infers `modelType` from it — the same mechanism already
+ * used for the default model.
  */
-export type QvacModelDescriptor = typeof QWEN3_600M_INST_Q4 | typeof QWEN3_1_7B_INST_Q4;
+export type QvacModelDescriptor =
+  typeof QWEN3_600M_INST_Q4 | typeof QWEN3_1_7B_INST_Q4 | typeof QWEN3_4B_INST_Q4_K_M;
 
 export interface QvacExtractionConfig {
   modelPath?: string;
   modelName?: string;
   /**
    * Selects a registry model other than the default `QWEN3_600M_INST_Q4`, e.g.
-   * `QWEN3_1_7B_INST_Q4` for a model-quality comparison. Ignored when `modelPath` is set, which
-   * takes priority as an explicit local/provisioned source.
+   * `QWEN3_1_7B_INST_Q4` for a model-quality comparison, or `QWEN3_4B_INST_Q4_K_M`, the model
+   * approved for the demo per `docs/MODEL_STRATEGY.md`'s 2026-09-10 addendum. Ignored when
+   * `modelPath` is set, which takes priority as an explicit local/provisioned source.
    */
   modelDescriptor?: QvacModelDescriptor;
   contextSize?: number;
@@ -157,7 +161,8 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
         QWEN3_600M_INST_Q4.name,
       networkRequiredForInference: false,
       status: 'model-not-loaded',
-      detail: 'Model initialization is explicit; first download may require network access.',
+      detail:
+        'La inicialización del modelo es explícita; la primera descarga puede requerir acceso a la red.',
       progressPercent: null,
     };
   }
@@ -165,7 +170,7 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
   async initialize(): Promise<InferenceRuntimeInfo> {
     if (this.modelId) return this.getRuntimeInfo();
     try {
-      this.setRuntime({ status: 'loading', detail: 'Initializing the local QVAC worker.' });
+      this.setRuntime({ status: 'loading', detail: 'Inicializando el proceso local de QVAC.' });
       await heartbeat();
       this.config.onLifecycleEvent?.('runtime-initialized');
 
@@ -174,8 +179,8 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
           status: progress.percentage < 100 ? 'downloading' : 'loading',
           detail:
             progress.percentage < 100
-              ? 'Downloading the configured QVAC model to the local cache.'
-              : 'Loading the model on this device.',
+              ? 'Descargando el modelo QVAC configurado a la caché local.'
+              : 'Cargando el modelo en este dispositivo.',
           progressPercent: Math.max(0, Math.min(100, progress.percentage)),
         });
       };
@@ -193,6 +198,12 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
         });
       } else if (this.config.modelDescriptor?.name === QWEN3_1_7B_INST_Q4.name) {
         this.modelId = await loadModel({ modelSrc: QWEN3_1_7B_INST_Q4, modelConfig, onProgress });
+      } else if (this.config.modelDescriptor?.name === QWEN3_4B_INST_Q4_K_M.name) {
+        this.modelId = await loadModel({
+          modelSrc: QWEN3_4B_INST_Q4_K_M,
+          modelConfig,
+          onProgress,
+        });
       } else {
         this.modelId = await loadModel({ modelSrc: QWEN3_600M_INST_Q4, modelConfig, onProgress });
       }
@@ -200,12 +211,12 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
       if (
         !info.handlers.some((handler) => handler.toLocaleLowerCase('en').includes('completion'))
       ) {
-        throw new Error('The loaded QVAC model does not expose a completion handler.');
+        throw new Error('El modelo QVAC cargado no expone un controlador de finalización.');
       }
       this.config.onLifecycleEvent?.('model-loaded');
       this.setRuntime({
         status: 'ready',
-        detail: `Loaded locally as ${this.modelId}.`,
+        detail: `Cargado localmente como ${this.modelId}.`,
         progressPercent: 100,
       });
       return this.getRuntimeInfo();
@@ -213,7 +224,7 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
       this.modelId = null;
       this.setRuntime({
         status: 'error',
-        detail: error instanceof Error ? error.message : 'Unknown QVAC initialization error.',
+        detail: error instanceof Error ? error.message : 'Error desconocido al inicializar QVAC.',
       });
       throw error;
     }
@@ -225,17 +236,22 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
 
   async extract(text: string, context: ExtractionContext): Promise<ObservationExtraction> {
     if (!this.modelId) {
-      throw new Error('QVAC is not initialized. Load the on-device model before capturing.');
+      throw new Error(
+        'QVAC no está inicializado. Cargue el modelo en el dispositivo antes de capturar.',
+      );
     }
-    this.setRuntime({ status: 'processing', detail: 'QVAC is processing locally.' });
+    this.setRuntime({ status: 'processing', detail: 'QVAC está procesando localmente.' });
     try {
       const validated = await this.extractWithOneRetry(text, context);
-      this.setRuntime({ status: 'ready', detail: 'Last extraction completed on-device.' });
+      this.setRuntime({
+        status: 'ready',
+        detail: 'Última extracción completada en el dispositivo.',
+      });
       return normalizeExtraction(validated);
     } catch (error) {
       this.setRuntime({
         status: 'error',
-        detail: error instanceof Error ? error.message : 'Unknown QVAC inference error.',
+        detail: error instanceof Error ? error.message : 'Error desconocido de inferencia QVAC.',
       });
       throw error;
     }
@@ -273,7 +289,9 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
   ): Promise<ObservationExtraction> {
     const modelId = this.modelId;
     if (!modelId) {
-      throw new Error('QVAC is not initialized. Load the on-device model before capturing.');
+      throw new Error(
+        'QVAC no está inicializado. Cargue el modelo en el dispositivo antes de capturar.',
+      );
     }
     const jsonSchema = z.toJSONSchema(ObservationExtractionSchema);
     const run = completion({
@@ -339,7 +357,7 @@ export class QvacObservationExtractionService implements ObservationExtractionPo
     await unloadModel({ modelId });
     this.setRuntime({
       status: 'model-not-loaded',
-      detail: 'The QVAC model was unloaded.',
+      detail: 'El modelo QVAC fue descargado de memoria.',
       progressPercent: null,
     });
   }

@@ -11,4 +11,5 @@ export const IPC_CHANNELS = {
   customer360: 'customers:get-360',
   duplicateResolve: 'duplicates:resolve',
   dashboard: 'dashboard:get',
+  voiceTranscribe: 'voice:transcribe',
 } as const;

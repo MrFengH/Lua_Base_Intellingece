@@ -394,7 +394,7 @@ describe('CaptureWorkflowService', () => {
     try {
       const started = service.start();
       const missingCustomer = await service.submitMessage(started.id, 'They have two MR systems.');
-      expect(missingCustomer.pendingQuestion?.text).toBe('What hospital or clinic did you visit?');
+      expect(missingCustomer.pendingQuestion?.text).toBe('¿Qué hospital o clínica visitó?');
 
       const result = await service.submitMessage(started.id, 'no');
 
@@ -833,7 +833,7 @@ describe('CaptureWorkflowService review confirmation (P3-S3)', () => {
 
       const summary = review.messages.at(-1);
       expect(summary?.role).toBe('Assistant');
-      expect(summary?.content).toContain('Is that correct?');
+      expect(summary?.content).toContain('¿Es correcto?');
       expect(summary?.content).toContain('MR');
       expect(review.reviewConfirmed).toBe(false);
     } finally {
@@ -944,7 +944,7 @@ describe('CaptureWorkflowService review confirmation (P3-S3)', () => {
       const started = service.start();
       await service.submitMessage(started.id, 'Test evidence.');
       const review = service.proceedToReview(started.id);
-      expect(review.messages.at(-1)?.content).toContain('uncertain');
+      expect(review.messages.at(-1)?.content).toContain('incierto');
     } finally {
       database.close();
     }
@@ -1140,7 +1140,7 @@ describe('CaptureWorkflowService contradictions inside one capture (P3-S6)', () 
       );
       expect(evidenceOf(group(corrected).quantity)).toContain(firstEvidence);
       expect(group(corrected).contradictions).toEqual([]);
-      expect(corrected.pendingQuestion?.text ?? '').not.toContain('Which one should I keep');
+      expect(corrected.pendingQuestion?.text ?? '').not.toContain('¿Cuál debo conservar?');
     } finally {
       database.close();
     }
@@ -1159,7 +1159,7 @@ describe('CaptureWorkflowService contradictions inside one capture (P3-S6)', () 
       await service.submitMessage(started.id, 'Vi directamente dos MR de NovaMed.');
       const contradicted = await service.submitMessage(started.id, 'Quiza era Orion Imaging.');
       expect(contradicted.draft.state).toBe('NEEDS_FOLLOW_UP');
-      expect(() => service.proceedToReview(started.id)).toThrow(/contradictory/i);
+      expect(() => service.proceedToReview(started.id)).toThrow(/contradictoria/i);
 
       const resolved = await service.submitMessage(started.id, 'NovaMed');
 
@@ -1167,7 +1167,7 @@ describe('CaptureWorkflowService contradictions inside one capture (P3-S6)', () 
         expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
       );
       expect(group(resolved).contradictions).toEqual([]);
-      expect(resolved.pendingQuestion?.text ?? '').not.toContain('Which one should I keep');
+      expect(resolved.pendingQuestion?.text ?? '').not.toContain('¿Cuál debo conservar?');
     } finally {
       database.close();
     }
@@ -1288,6 +1288,425 @@ describe('CaptureWorkflowService contradictions inside one capture (P3-S6)', () 
         )
         .get(started.id) as { count: number };
       expect(candidates.count).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('CaptureWorkflowService pending-answer multi-field merge', () => {
+  /**
+   * Establishes a precondition (a specific field left Missing) with one fixed extraction, then
+   * hands every later turn to a real `DevelopmentMockObservationExtractionService`, so the actual
+   * fix under test — the mock's own answer parsing — is what is exercised for the answer being
+   * tested, not a second canned response.
+   */
+  const primeThenRealMock = (primer: unknown): ObservationExtractionPort => {
+    const real = new DevelopmentMockObservationExtractionService();
+    const primed = ObservationExtractionSchema.parse(primer);
+    let primedTurnRemaining = true;
+    return {
+      kind: 'development-mock',
+      initialize: () => real.initialize(),
+      getRuntimeInfo: () => real.getRuntimeInfo(),
+      extract: async (text, context) => {
+        if (primedTurnRemaining) {
+          primedTurnRemaining = false;
+          return primed;
+        }
+        return real.extract(text, context);
+      },
+      dispose: () => real.dispose(),
+    };
+  };
+
+  const group = (capture: CaptureSessionView): CaptureEquipmentDraft => {
+    const item = capture.draft.equipment[0];
+    if (!item) throw new Error('The draft has no equipment group.');
+    return item;
+  };
+
+  it('preserves an incidentally-mentioned age while answering a quantity question', async () => {
+    const { database, service } = createHarness(
+      primeThenRealMock(extraction({ modality: 'CT', quantity: null, certainty: 'Explicit' })),
+    );
+    try {
+      const started = service.start();
+      const primed = await service.submitMessage(started.id, 'Tienen tomógrafos.');
+      expect(primed.pendingQuestion?.field).toBe('Quantity');
+
+      const answered = await service.submitMessage(started.id, '3, y tenían alrededor de 7 años');
+
+      expect(group(answered).quantity).toEqual(
+        expect.objectContaining({ state: 'Known', value: 3 }),
+      );
+      expect(group(answered).approximateAge).toEqual(
+        expect.objectContaining({
+          state: 'Known',
+          value: { type: 'estimate', minYears: 7, maxYears: 7 },
+        }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('preserves a manufacturer, model and age all volunteered in one manufacturer answer', async () => {
+    const { database, service } = createHarness(
+      primeThenRealMock(extraction({ modality: 'MR', quantity: 2, certainty: 'Explicit' })),
+    );
+    try {
+      const started = service.start();
+      const primed = await service.submitMessage(started.id, 'Vi dos resonadores.');
+      expect(primed.pendingQuestion?.field).toBe('Manufacturer');
+
+      const answered = await service.submitMessage(
+        started.id,
+        'Son NovaMed, modelo NM-300, de unos ocho años',
+      );
+
+      expect(group(answered).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed' }),
+      );
+      expect(group(answered).model).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NM-300' }),
+      );
+      expect(group(answered).approximateAge).toEqual(
+        expect.objectContaining({
+          state: 'Known',
+          value: { type: 'estimate', minYears: 8, maxYears: 8 },
+        }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('still answers a bare short reply ("3") without inventing an age from nothing', async () => {
+    const { database, service } = createHarness(
+      primeThenRealMock(extraction({ modality: 'CT', quantity: null, certainty: 'Explicit' })),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Tienen tomógrafos.');
+
+      const answered = await service.submitMessage(started.id, '3');
+
+      expect(group(answered).quantity).toEqual(
+        expect.objectContaining({ state: 'Known', value: 3 }),
+      );
+      expect(group(answered).approximateAge.state).toBe('Missing');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('still treats a bare "No" as a declared unknown for the field actually pending', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      await service.submitMessage(
+        started.id,
+        'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
+      );
+      const declined = await service.submitMessage(started.id, 'No');
+
+      expect(declined.draft.equipment[0]?.manufacturer.state).toBe('DeclaredUnknown');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not re-ask about a field the same turn already answered', async () => {
+    const { database, service } = createHarness(
+      primeThenRealMock(extraction({ modality: 'CT', quantity: null, certainty: 'Explicit' })),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Tienen tomógrafos.');
+
+      const answered = await service.submitMessage(started.id, '3, y tenían alrededor de 7 años');
+
+      // Age was volunteered alongside quantity, so the next gap is manufacturer, never age again.
+      expect(answered.pendingQuestion?.field).not.toBe('ApproximateAge');
+      expect(answered.pendingQuestion?.field).toBe('Manufacturer');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('still raises a contradiction (P3-S6) for a manufacturer volunteered inside another answer, never a silent overwrite', async () => {
+    const { database, service } = createHarness();
+    try {
+      const started = service.start();
+      await service.submitMessage(
+        started.id,
+        'Vi un MR en el Hospital DemoCare Pacific en Panama.',
+      );
+      const afterManufacturer = await service.submitMessage(started.id, 'NovaMed');
+      expect(afterManufacturer.pendingQuestion?.field).toBe('ApproximateAge');
+
+      const afterAge = await service.submitMessage(
+        started.id,
+        '7 años; creo que es Orion Imaging.',
+      );
+
+      // The age question was answered...
+      expect(group(afterAge).approximateAge).toEqual(
+        expect.objectContaining({
+          state: 'Known',
+          value: { type: 'estimate', minYears: 7, maxYears: 7 },
+        }),
+      );
+      // ...but the manufacturer it also volunteered disagrees with the one already on record, so
+      // it becomes a contradiction instead of silently replacing NovaMed.
+      expect(group(afterAge).manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Orion Imaging', certainty: 'Uncertain' }),
+      );
+      expect(group(afterAge).contradictions).toEqual([
+        expect.objectContaining({
+          field: 'Manufacturer',
+          previousText: 'NovaMed',
+          currentText: 'Orion Imaging',
+        }),
+      ]);
+      expect(afterAge.pendingQuestion?.field).toBe('Manufacturer');
+      expect(afterAge.pendingQuestion?.text).toContain('NovaMed');
+      expect(afterAge.pendingQuestion?.text).toContain('Orion Imaging');
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe('CaptureWorkflowService cross-group follow-up scope ("para ambos" / "for both")', () => {
+  /** Feeds one extraction per message, so a multi-turn conversation can be staged deterministically. */
+  const sequenceExtractor = (values: readonly unknown[]): ObservationExtractionPort => {
+    const parsed = values.map((value) => ObservationExtractionSchema.parse(value));
+    const runtime: InferenceRuntimeInfo = {
+      engine: 'Development Mock',
+      execution: 'Development only',
+      model: 'Sequenced test extraction',
+      networkRequiredForInference: false,
+      status: 'ready',
+      detail: 'Test double.',
+      progressPercent: 100,
+    };
+    let index = 0;
+    return {
+      kind: 'development-mock',
+      initialize: async () => runtime,
+      getRuntimeInfo: () => runtime,
+      extract: async () => {
+        const value = parsed[Math.min(index, parsed.length - 1)];
+        index += 1;
+        if (!value) throw new Error('The test extractor ran out of extractions.');
+        return value;
+      },
+      dispose: async () => undefined,
+    };
+  };
+
+  const equipmentItem = (
+    overrides: Readonly<Record<string, unknown>>,
+  ): Record<string, unknown> => ({
+    rawModality: null,
+    quantity: 1,
+    manufacturer: null,
+    model: null,
+    approximateAge: { type: 'unknown' },
+    notes: null,
+    certainty: 'Explicit',
+    ...overrides,
+  });
+
+  const twoGroupsExtraction = (): Readonly<Record<string, unknown>> => ({
+    customer: { name: 'Hospital Certainty Lab', city: 'Panama City', country: 'Panama' },
+    equipment: [equipmentItem({ modality: 'MR', quantity: 2 }), equipmentItem({ modality: 'CT' })],
+  });
+
+  const threeGroupsExtraction = (): Readonly<Record<string, unknown>> => ({
+    customer: { name: 'Hospital Certainty Lab', city: 'Panama City', country: 'Panama' },
+    equipment: [
+      equipmentItem({ modality: 'MR', quantity: 2 }),
+      equipmentItem({ modality: 'CT' }),
+      equipmentItem({ modality: 'Ultrasound' }),
+    ],
+  });
+
+  /** An answer to the pending Manufacturer question, targeted at whichever group is missing it
+   * first (MR, in every fixture above); `quantity: null` so it never re-merges over an already
+   * known quantity. */
+  const manufacturerAnswer = (manufacturer: string): Readonly<Record<string, unknown>> => ({
+    customer: { name: null, city: null, country: null },
+    equipment: [equipmentItem({ modality: 'MR', quantity: null, manufacturer })],
+  });
+
+  const groupByModality = (
+    capture: CaptureSessionView,
+    modality: string,
+  ): CaptureEquipmentDraft => {
+    const item = capture.draft.equipment.find(
+      (candidate) => candidate.modality.state === 'Known' && candidate.modality.value === modality,
+    );
+    if (!item) throw new Error(`No equipment group with modality ${modality}.`);
+    return item;
+  };
+
+  const evidenceOf = (field: DraftField<unknown>): readonly string[] =>
+    field.state === 'Missing' ? [] : field.evidenceIds;
+
+  const lastUserEvidence = (capture: CaptureSessionView): string =>
+    String(capture.messages.filter((item) => item.role === 'User').at(-1)?.id);
+
+  it('applies "NovaMed para ambos" to both equipment groups and asks no redundant follow-up', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([twoGroupsExtraction(), manufacturerAnswer('NovaMed')]),
+    );
+    try {
+      const started = service.start();
+      const afterFirst = await service.submitMessage(
+        started.id,
+        'Tienen dos resonadores y un tomografo.',
+      );
+      expect(afterFirst.pendingQuestion?.field).toBe('Manufacturer');
+      expect(afterFirst.pendingQuestion?.target).toEqual({
+        type: 'Equipment',
+        equipmentGroupId: groupByModality(afterFirst, 'MR').id,
+      });
+
+      const answered = await service.submitMessage(started.id, 'NovaMed para ambos');
+      const evidenceId = lastUserEvidence(answered);
+
+      expect(groupByModality(answered, 'MR').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      expect(groupByModality(answered, 'CT').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      // The same user message backs both fields.
+      expect(evidenceOf(groupByModality(answered, 'MR').manufacturer)).toContain(evidenceId);
+      expect(evidenceOf(groupByModality(answered, 'CT').manufacturer)).toContain(evidenceId);
+      // No redundant CT manufacturer follow-up.
+      expect(answered.pendingQuestion?.field).not.toBe('Manufacturer');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('applies the English "for both" marker the same way', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([twoGroupsExtraction(), manufacturerAnswer('NovaMed')]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'They have two MR systems and one CT.');
+      const answered = await service.submitMessage(started.id, 'NovaMed for both');
+
+      expect(groupByModality(answered, 'MR').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed' }),
+      );
+      expect(groupByModality(answered, 'CT').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed' }),
+      );
+      expect(answered.pendingQuestion?.field).not.toBe('Manufacturer');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not propagate a plain manufacturer answer with no scope marker', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([twoGroupsExtraction(), manufacturerAnswer('NovaMed')]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(started.id, 'Tienen dos resonadores y un tomografo.');
+      const answered = await service.submitMessage(started.id, 'NovaMed');
+
+      expect(groupByModality(answered, 'MR').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed' }),
+      );
+      expect(groupByModality(answered, 'CT').manufacturer.state).toBe('Missing');
+      expect(answered.pendingQuestion?.field).toBe('Manufacturer');
+      expect(answered.pendingQuestion?.target).toEqual({
+        type: 'Equipment',
+        equipmentGroupId: groupByModality(answered, 'CT').id,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('does not guess which two groups "para ambos" means when there are three', async () => {
+    const { database, service } = createHarness(
+      sequenceExtractor([threeGroupsExtraction(), manufacturerAnswer('NovaMed')]),
+    );
+    try {
+      const started = service.start();
+      await service.submitMessage(
+        started.id,
+        'Tienen dos resonadores, un tomografo y un ultrasonido.',
+      );
+      const answered = await service.submitMessage(started.id, 'NovaMed para ambos');
+
+      expect(groupByModality(answered, 'MR').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed' }),
+      );
+      // Ambiguous with three groups: neither of the other two is guessed at.
+      expect(groupByModality(answered, 'CT').manufacturer.state).toBe('Missing');
+      expect(groupByModality(answered, 'Ultrasound').manufacturer.state).toBe('Missing');
+      // Normal follow-up behaviour continues instead.
+      expect(answered.pendingQuestion?.field).toBe('Manufacturer');
+    } finally {
+      database.close();
+    }
+  });
+
+  it('routes a conflicting existing value through contradiction semantics instead of overwriting it', async () => {
+    const initialExtraction = (): Readonly<Record<string, unknown>> => ({
+      customer: { name: 'Hospital Certainty Lab', city: 'Panama City', country: 'Panama' },
+      equipment: [
+        equipmentItem({ modality: 'MR', quantity: 2 }),
+        equipmentItem({ modality: 'CT', manufacturer: 'Orion Imaging' }),
+      ],
+    });
+    const { database, service } = createHarness(
+      sequenceExtractor([initialExtraction(), manufacturerAnswer('NovaMed')]),
+    );
+    try {
+      const started = service.start();
+      const afterFirst = await service.submitMessage(
+        started.id,
+        'Tienen dos resonadores y un tomografo de Orion Imaging.',
+      );
+      expect(afterFirst.pendingQuestion?.field).toBe('Manufacturer');
+      expect(groupByModality(afterFirst, 'CT').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'Orion Imaging', certainty: 'Explicit' }),
+      );
+      const ctEvidenceBefore = evidenceOf(groupByModality(afterFirst, 'CT').manufacturer);
+
+      const answered = await service.submitMessage(started.id, 'NovaMed para ambos');
+
+      expect(groupByModality(answered, 'MR').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Explicit' }),
+      );
+      // CT is NOT silently overwritten: the conflicting claim becomes an open contradiction,
+      // exactly as it would for a normal single-group disagreement (P3-S6).
+      expect(groupByModality(answered, 'CT').manufacturer).toEqual(
+        expect.objectContaining({ state: 'Known', value: 'NovaMed', certainty: 'Uncertain' }),
+      );
+      expect(groupByModality(answered, 'CT').contradictions).toEqual([
+        expect.objectContaining({
+          field: 'Manufacturer',
+          previousText: 'Orion Imaging',
+          previousEvidenceIds: ctEvidenceBefore,
+          currentText: 'NovaMed',
+        }),
+      ]);
+      expect(answered.pendingQuestion?.field).toBe('Manufacturer');
+      expect(answered.pendingQuestion?.text).toContain('Orion Imaging');
+      expect(answered.pendingQuestion?.text).toContain('NovaMed');
     } finally {
       database.close();
     }

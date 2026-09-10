@@ -26,6 +26,7 @@ import type { ObservationExtraction } from '@/application';
 import {
   QvacObservationExtractionService,
   QWEN3_1_7B_INST_Q4,
+  QWEN3_4B_INST_Q4_K_M,
   QWEN3_600M_INST_Q4,
   type QvacLifecycleEvent,
   type QvacModelDescriptor,
@@ -42,7 +43,6 @@ import {
   type CorpusLanguage,
   type FieldEvaluation,
 } from '../tests/fixtures/corpus';
-import { QWEN3_4B_INST_Q4_K_M } from '../src/infrastructure/qvac/qvac-corpus-eval-model';
 
 /**
  * The eight official anti-fabrication cases named in docs/ROADMAP.md, P4-S2. Not a corpus
@@ -309,11 +309,11 @@ const MODEL_CHOICES = {
   '600m': QWEN3_600M_INST_Q4,
   '1.7b': QWEN3_1_7B_INST_Q4,
   '4b': QWEN3_4B_INST_Q4_K_M,
-} satisfies Record<string, QvacModelDescriptor | typeof QWEN3_4B_INST_Q4_K_M>;
+} satisfies Record<string, QvacModelDescriptor>;
 
 function resolveModelChoice(): {
   key: keyof typeof MODEL_CHOICES;
-  descriptor: QvacModelDescriptor | typeof QWEN3_4B_INST_Q4_K_M;
+  descriptor: QvacModelDescriptor;
 } {
   const key = (process.env.CIB_QVAC_CORPUS_MODEL ?? '600m').toLowerCase();
   if (key !== '600m' && key !== '1.7b' && key !== '4b') {
@@ -335,13 +335,6 @@ async function main(): Promise<void> {
 
   const { key: modelChoice, descriptor: modelDescriptor } = resolveModelChoice();
   const usingLocalPath = Boolean(process.env.CIB_QVAC_MODEL_PATH);
-  const benchmarkRegistrySource = modelChoice === '4b' ? modelDescriptor.src : undefined;
-  const productionModelDescriptor: QvacModelDescriptor | undefined =
-    modelChoice === '600m'
-      ? QWEN3_600M_INST_Q4
-      : modelChoice === '1.7b'
-        ? QWEN3_1_7B_INST_Q4
-        : undefined;
   console.log(
     usingLocalPath
       ? `Model: local path override (${process.env.CIB_QVAC_MODEL_PATH})`
@@ -356,10 +349,9 @@ async function main(): Promise<void> {
     'extraction-retried': 'extraction attempt failed and was retried once',
   };
   const extractor = new QvacObservationExtractionService({
-    modelPath: process.env.CIB_QVAC_MODEL_PATH ?? benchmarkRegistrySource,
-    modelDescriptor: productionModelDescriptor,
-    modelName:
-      process.env.CIB_QVAC_MODEL_NAME ?? (modelChoice === '4b' ? modelDescriptor.name : undefined),
+    modelPath: process.env.CIB_QVAC_MODEL_PATH,
+    modelDescriptor: usingLocalPath ? undefined : modelDescriptor,
+    modelName: process.env.CIB_QVAC_MODEL_NAME,
     onLifecycleEvent: (event) => {
       if (event === 'runtime-initialized' || event === 'model-loaded') {
         console.log(lifecycleMessages[event]);

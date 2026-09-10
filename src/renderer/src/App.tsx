@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CaptureCorrection,
   CaptureSessionView,
@@ -15,6 +15,7 @@ import { MODALITIES } from '@/domain/model';
 import { contradictionFieldLabel } from '@/domain/rules';
 import type {
   ApproximateAge,
+  CaptureState,
   ConfidenceAssessment,
   ConfidenceReasonCode,
   DraftField,
@@ -22,14 +23,36 @@ import type {
   DuplicateResolution,
   EvidenceRelationship,
   FactCertainty,
+  FieldOrigin,
+  FollowUpPriority,
   InstallationEstimate,
   KnowledgeState,
   ObservationStatus,
   ResolvedDuplicateResolution,
 } from '@/domain';
 import type { IpcResult } from '@/shared';
+import luaLogo from '../../../assets/logo_lua.png';
+import { encodeWavFromAudioBuffer } from './audio/wav-encoder';
+import {
+  IconCheck,
+  IconChart,
+  IconChevronLeft,
+  IconChevronRight,
+  IconClose,
+  IconFacility,
+  IconFlag,
+  IconInbox,
+  IconLedger,
+  IconMic,
+  IconSend,
+} from './icons';
 
 type Page = 'capture' | 'customers' | 'dashboard';
+
+/** Local recording/transcription state for the microphone button — never persisted, never
+ * touching the capture draft directly; a finished transcript is placed into the ordinary text
+ * input for the observer to review, edit, or discard like anything else they typed. */
+type VoiceState = 'idle' | 'recording' | 'transcribing' | 'permission-denied' | 'error';
 
 const unwrap = <T,>(result: IpcResult<T>): T => {
   if (!result.ok) throw new Error(result.error.message);
@@ -38,66 +61,107 @@ const unwrap = <T,>(result: IpcResult<T>): T => {
 
 const fieldText = <T,>(field: DraftField<T>, format: (value: T) => string = String): string => {
   if (field.state === 'Known') return format(field.value);
-  return field.state === 'DeclaredUnknown' ? 'Unknown (acknowledged)' : 'Missing';
+  return field.state === 'DeclaredUnknown' ? 'Desconocido (declarado)' : 'No indicado';
 };
 
 const ageText = (age: ApproximateAge): string => {
-  if (age.type === 'unknown') return 'Unknown';
+  if (age.type === 'unknown') return 'Desconocida';
   if (age.type === 'qualitative') return age.label;
-  if (age.type === 'exact') return `${age.years} years`;
-  if (age.minYears === age.maxYears) return `~${age.minYears} years`;
-  return `${age.minYears}–${age.maxYears} years`;
+  if (age.type === 'exact') return `${age.years} años`;
+  if (age.minYears === age.maxYears) return `~${age.minYears} años`;
+  return `${age.minYears}–${age.maxYears} años`;
+};
+
+/** Human labels for the coded `ObservationStatus` enum. The enum value stays in the stored data
+ * and is used for logic (e.g. CSS state classes); only the label is presentational. */
+const STATUS_LABELS: Record<ObservationStatus, string> = {
+  Confirmed: 'Confirmado',
+  Reported: 'Reportado',
+  Estimated: 'Estimado',
+  Unknown: 'Desconocido',
+};
+
+/** Which chip register each observation status reads as — a stamped classification, not a
+ * decorative color. */
+const STATUS_CHIP_CLASS: Record<ObservationStatus, string> = {
+  Confirmed: 'chip-verified',
+  Reported: 'chip-info',
+  Estimated: 'chip-estimated',
+  Unknown: 'chip-neutral',
 };
 
 /** Answers "how did the observer come to know this", per docs/DATA_SCHEMA.md. Fixed text per
  * status value, not derived from any one record, so it never re-infers status in the renderer. */
 const STATUS_EXPLANATIONS: Record<ObservationStatus, string> = {
-  Confirmed: 'Observer stated they saw the equipment directly.',
-  Reported: 'Information was relayed from another person or source.',
-  Estimated: 'Observer presented the account as an estimate.',
-  Unknown: 'Observation source could not be established.',
+  Confirmed: 'El observador indicó haber visto el equipo directamente.',
+  Reported: 'La información fue transmitida por otra persona u otra fuente.',
+  Estimated: 'El observador presentó el relato como una estimación.',
+  Unknown: 'No se pudo establecer el origen de la observación.',
 };
 
 /** Human labels for the coded confidence reasons already produced by
  * SimpleConfidenceScoringService. The reason code stays in the stored data; only the label is
  * presentational. */
 const CONFIDENCE_REASON_LABELS: Record<ConfidenceReasonCode, string> = {
-  NO_KNOWN_FACTS: 'No fields have a known value yet',
-  EXPLICIT_FACTS: 'Some fields were explicitly stated',
-  UNCERTAINTY_LANGUAGE: 'Some fields were uncertain',
-  DERIVED_FACTS: 'Some fields were derived rather than reported',
-  INCOMPLETE_FIELDS: 'Some fields are still incomplete',
+  NO_KNOWN_FACTS: 'Ningún campo tiene un valor conocido todavía',
+  EXPLICIT_FACTS: 'Algunos campos se indicaron explícitamente',
+  UNCERTAINTY_LANGUAGE: 'Algunos campos eran inciertos',
+  DERIVED_FACTS: 'Algunos campos fueron derivados en lugar de reportados',
+  INCOMPLETE_FIELDS: 'Algunos campos siguen incompletos',
+};
+
+/** Human labels for the coded `ConfidenceLevel` enum. */
+const CONFIDENCE_LEVEL_LABELS: Record<ConfidenceAssessment['level'], string> = {
+  High: 'Alta',
+  Medium: 'Media',
+  Low: 'Baja',
+  Unknown: 'Desconocida',
+};
+
+const CONFIDENCE_CHIP_CLASS: Record<ConfidenceAssessment['level'], string> = {
+  High: 'chip-verified',
+  Medium: 'chip-estimated',
+  Low: 'chip-caution',
+  Unknown: 'chip-neutral',
 };
 
 const DUPLICATE_RELATIONSHIP_LABELS: Record<EvidenceRelationship, string> = {
-  NoMatch: 'No match',
-  PossibleDuplicate: 'Possible duplicate',
-  PossibleCorroboration: 'Possible corroboration',
-  PartialMatch: 'Partial match',
-  PossibleConflict: 'Possible conflict',
+  NoMatch: 'Sin coincidencia',
+  PossibleDuplicate: 'Posible duplicado',
+  PossibleCorroboration: 'Posible corroboración',
+  PartialMatch: 'Coincidencia parcial',
+  PossibleConflict: 'Posible conflicto',
+};
+
+const DUPLICATE_RELATIONSHIP_CHIP_CLASS: Record<EvidenceRelationship, string> = {
+  NoMatch: 'chip-neutral',
+  PossibleDuplicate: 'chip-estimated',
+  PossibleCorroboration: 'chip-verified',
+  PartialMatch: 'chip-estimated',
+  PossibleConflict: 'chip-contradiction',
 };
 
 const DUPLICATE_REASON_LABELS: Partial<Record<DuplicateReasonCode, string>> = {
-  DIFFERENT_CUSTOMER: 'Different facility',
-  SAME_CUSTOMER: 'Same facility',
-  UNKNOWN_MODALITY: 'Modality is unknown',
-  DIFFERENT_MODALITY: 'Different modality',
-  SAME_MODALITY: 'Same modality',
-  SAME_MANUFACTURER: 'Same manufacturer',
-  DIFFERENT_MANUFACTURER: 'Different manufacturer',
-  SAME_MODEL: 'Same model',
-  DIFFERENT_MODEL: 'Different model',
-  COMPATIBLE_AGE: 'Compatible approximate age',
-  INCOMPATIBLE_AGE: 'Incompatible approximate age',
-  INDEPENDENT_OBSERVER: 'Reported by a different observer',
-  INDEPENDENT_VISIT: 'Reported during a different visit',
+  DIFFERENT_CUSTOMER: 'Centro diferente',
+  SAME_CUSTOMER: 'Mismo centro',
+  UNKNOWN_MODALITY: 'Modalidad desconocida',
+  DIFFERENT_MODALITY: 'Modalidad diferente',
+  SAME_MODALITY: 'Misma modalidad',
+  SAME_MANUFACTURER: 'Mismo fabricante',
+  DIFFERENT_MANUFACTURER: 'Fabricante diferente',
+  SAME_MODEL: 'Mismo modelo',
+  DIFFERENT_MODEL: 'Modelo diferente',
+  COMPATIBLE_AGE: 'Antigüedad aproximada compatible',
+  INCOMPATIBLE_AGE: 'Antigüedad aproximada incompatible',
+  INDEPENDENT_OBSERVER: 'Reportado por un observador diferente',
+  INDEPENDENT_VISIT: 'Reportado durante una visita diferente',
 };
 
 const DUPLICATE_RESOLUTION_LABELS: Record<DuplicateResolution, string> = {
-  Unresolved: 'Pending review',
-  NotDuplicate: 'Not duplicate',
-  SameEquipment: 'Same equipment',
-  CorroboratingEvidence: 'Corroborating evidence',
+  Unresolved: 'Pendiente de revisión',
+  NotDuplicate: 'No es duplicado',
+  SameEquipment: 'Mismo equipo',
+  CorroboratingEvidence: 'Evidencia corroborante',
 };
 
 const DUPLICATE_RESOLUTION_OPTIONS: ReadonlyArray<{
@@ -107,40 +171,64 @@ const DUPLICATE_RESOLUTION_OPTIONS: ReadonlyArray<{
 }> = [
   {
     value: 'NotDuplicate',
-    label: 'Not duplicate',
-    description: 'These observations do not refer to the same equipment.',
+    label: 'No es duplicado',
+    description: 'Estas observaciones no se refieren al mismo equipo.',
   },
   {
     value: 'SameEquipment',
-    label: 'Same equipment',
-    description: 'They refer to the same equipment; both evidence records remain intact.',
+    label: 'Mismo equipo',
+    description: 'Se refieren al mismo equipo; ambos registros de evidencia permanecen intactos.',
   },
   {
     value: 'CorroboratingEvidence',
-    label: 'Corroborating evidence',
-    description: 'The new observation independently supports the existing record.',
+    label: 'Evidencia corroborante',
+    description: 'La nueva observación respalda de forma independiente el registro existente.',
   },
 ];
 
 const FIELD_LABELS: Record<string, string> = {
-  modality: 'Modality',
-  quantity: 'Quantity',
-  manufacturer: 'Manufacturer',
-  model: 'Model',
-  approximateAge: 'Approx. age',
-  notes: 'Notes',
+  modality: 'Modalidad',
+  quantity: 'Cantidad',
+  manufacturer: 'Fabricante',
+  model: 'Modelo',
+  approximateAge: 'Antigüedad aprox.',
+  notes: 'Notas',
 };
 
 const KNOWLEDGE_STATE_LABELS: Record<KnowledgeState, string> = {
-  Known: 'Known',
-  DeclaredUnknown: 'Declared unknown',
-  Missing: 'Not mentioned',
+  Known: 'Conocido',
+  DeclaredUnknown: 'Desconocido declarado',
+  Missing: 'No mencionado',
+};
+
+/** Human labels for the coded `FactCertainty` enum. */
+const CERTAINTY_LABELS: Record<FactCertainty, string> = {
+  Explicit: 'Explícito',
+  Uncertain: 'Incierto',
+  Unknown: 'Desconocido',
+};
+
+/** Human labels for the coded `FieldOrigin` enum. */
+const FIELD_ORIGIN_LABELS: Record<FieldOrigin, string> = {
+  Observed: 'Observado',
+  Reported: 'Reportado',
+  Derived: 'Derivado',
+  Unknown: 'Desconocido',
+};
+
+/** Human label for the coded freshness status. Only `Unknown` is produced today; see
+ * docs/DATA_SCHEMA.md — no business aging thresholds have been supplied yet. */
+const FRESHNESS_STATUS_LABELS: Record<'Unknown', string> = { Unknown: 'Desconocida' };
+
+/** Human label for the coded aging policy status. Only `'Not configured'` is produced today. */
+const AGING_POLICY_LABELS: Record<'Not configured', string> = {
+  'Not configured': 'No configurada',
 };
 
 /** `null` means the extractor supplied no certainty at all, which must read differently from an
  * explicit `Unknown` classification — neither is promoted to `Explicit`. */
 const certaintyText = (certainty: FactCertainty | null): string =>
-  certainty === null ? 'Not supplied' : certainty;
+  certainty === null ? 'No proporcionado' : CERTAINTY_LABELS[certainty];
 
 /** A corrected field's evidence includes the `correction:` id the workflow service records when a
  * review edit is applied, so this reads existing provenance rather than inventing a history. */
@@ -148,13 +236,76 @@ const wasCorrected = (evidenceIds: readonly string[]): boolean =>
   evidenceIds.some((id) => id.startsWith('correction:'));
 
 const installationText = (installation: InstallationEstimate): string => {
-  if (installation.type === 'unknown') return 'Unknown';
-  if (installation.type === 'year') return `~${installation.year} (derived)`;
-  return `${installation.minYear}–${installation.maxYear} (derived)`;
+  if (installation.type === 'unknown') return 'Desconocida';
+  if (installation.type === 'year') return `~${installation.year} (derivado)`;
+  return `${installation.minYear}–${installation.maxYear} (derivado)`;
 };
 
 const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
   `${count} ${count === 1 ? singular : pluralForm}`;
+
+/** Human labels for the coded `ConversationMessage.role` enum. */
+const MESSAGE_ROLE_LABELS: Record<'User' | 'Assistant', string> = {
+  User: 'Usted',
+  Assistant: 'Asistente',
+};
+
+/** Human labels for the coded `CaptureState` enum. */
+const CAPTURE_STATE_LABELS: Record<CaptureState, string> = {
+  NEW: 'Nuevo',
+  EXTRACTING: 'Extrayendo',
+  NEEDS_FOLLOW_UP: 'Necesita seguimiento',
+  READY_FOR_REVIEW: 'Listo para revisión',
+  SAVED: 'Guardado',
+  ERROR: 'Error',
+};
+
+const CAPTURE_STATE_CHIP_CLASS: Record<CaptureState, string> = {
+  NEW: 'chip-neutral',
+  EXTRACTING: 'chip-neutral',
+  NEEDS_FOLLOW_UP: 'chip-estimated',
+  READY_FOR_REVIEW: 'chip-info',
+  SAVED: 'chip-verified',
+  ERROR: 'chip-contradiction',
+};
+
+/** Human labels for the coded `FollowUpPriority` enum. */
+const QUESTION_PRIORITY_LABELS: Record<FollowUpPriority, string> = {
+  Required: 'obligatoria',
+  Preferred: 'preferida',
+  Optional: 'opcional',
+};
+
+/** The five stages the capture workflow always passes through, used to drive the pipeline
+ * tracker at the top of the Capturar screen. */
+const CAPTURE_STAGES: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'capture', label: 'Captura' },
+  { key: 'followup', label: 'Seguimiento' },
+  { key: 'review', label: 'Revisión' },
+  { key: 'confirm', label: 'Confirmación' },
+  { key: 'save', label: 'Guardado' },
+];
+
+/** Maps the domain's `CaptureState` (plus the separate `reviewConfirmed` flag) onto the fixed
+ * five-stage pipeline the UI always shows, so the tracker reads the same workflow the state
+ * machine already enforces rather than a UI-only approximation of it. */
+const captureStageIndex = (capture: CaptureSessionView | null): number => {
+  if (!capture) return 0;
+  switch (capture.draft.state) {
+    case 'NEW':
+    case 'EXTRACTING':
+      return 0;
+    case 'NEEDS_FOLLOW_UP':
+      return 1;
+    case 'READY_FOR_REVIEW':
+      return capture.reviewConfirmed ? 3 : 2;
+    case 'SAVED':
+      return 4;
+    case 'ERROR':
+    default:
+      return 0;
+  }
+};
 
 interface SessionEvidenceGroup {
   sessionId: string;
@@ -207,8 +358,8 @@ const facilityText = (observation: DuplicateReviewObservation): string =>
 
 const confidenceText = (confidence: ConfidenceAssessment): string =>
   confidence.score === null
-    ? confidence.level
-    : `${confidence.level} (${confidence.score.toFixed(2)})`;
+    ? CONFIDENCE_LEVEL_LABELS[confidence.level]
+    : `${CONFIDENCE_LEVEL_LABELS[confidence.level]} (${confidence.score.toFixed(2)})`;
 
 interface DuplicateComparisonRow {
   label: string;
@@ -222,36 +373,40 @@ const duplicateComparisonRows = (
   const source = candidate.sourceObservation;
   const comparable = candidate.comparableObservation;
   return [
-    { label: 'Facility', source: facilityText(source), comparable: facilityText(comparable) },
-    { label: 'Modality', source: source.modality, comparable: comparable.modality },
+    { label: 'Centro', source: facilityText(source), comparable: facilityText(comparable) },
+    { label: 'Modalidad', source: source.modality, comparable: comparable.modality },
     {
-      label: 'Quantity',
-      source: source.quantity === null ? 'Unknown' : String(source.quantity),
-      comparable: comparable.quantity === null ? 'Unknown' : String(comparable.quantity),
+      label: 'Cantidad',
+      source: source.quantity === null ? 'Desconocida' : String(source.quantity),
+      comparable: comparable.quantity === null ? 'Desconocida' : String(comparable.quantity),
     },
     {
-      label: 'Manufacturer',
-      source: source.manufacturer ?? 'Unknown',
-      comparable: comparable.manufacturer ?? 'Unknown',
+      label: 'Fabricante',
+      source: source.manufacturer ?? 'Desconocido',
+      comparable: comparable.manufacturer ?? 'Desconocido',
     },
     {
-      label: 'Model',
-      source: source.model ?? 'Unknown',
-      comparable: comparable.model ?? 'Unknown',
+      label: 'Modelo',
+      source: source.model ?? 'Desconocido',
+      comparable: comparable.model ?? 'Desconocido',
     },
     {
-      label: 'Approx. age',
+      label: 'Antigüedad aprox.',
       source: ageText(source.approximateAge),
       comparable: ageText(comparable.approximateAge),
     },
-    { label: 'Status', source: source.status, comparable: comparable.status },
     {
-      label: 'Confidence',
+      label: 'Estado',
+      source: STATUS_LABELS[source.status],
+      comparable: STATUS_LABELS[comparable.status],
+    },
+    {
+      label: 'Confianza',
       source: confidenceText(source.confidence),
       comparable: confidenceText(comparable.confidence),
     },
     {
-      label: 'Observed / source',
+      label: 'Observado / fuente',
       source: `${new Date(source.observedAt).toLocaleDateString()} · ${source.source}`,
       comparable: `${new Date(comparable.observedAt).toLocaleDateString()} · ${comparable.source}`,
     },
@@ -285,33 +440,37 @@ const DuplicateReviewPanel = ({
     <article className="duplicate-review-card">
       <div className="duplicate-review-summary">
         <div>
-          <span className={`relationship-badge relationship-${candidate.relationship}`}>
+          <span
+            className={`status-chip ${DUPLICATE_RELATIONSHIP_CHIP_CLASS[candidate.relationship]}`}
+          >
             {DUPLICATE_RELATIONSHIP_LABELS[candidate.relationship]}
           </span>
-          <h4>Score: {candidate.score.toFixed(2)}</h4>
-          <small>Detection algorithm: {candidate.algorithmVersion}</small>
+          <h4>Puntaje: {candidate.score.toFixed(2)}</h4>
+          <small>Algoritmo de detección: {candidate.algorithmVersion}</small>
         </div>
         <div className="candidate-navigation">
           <span>
-            {candidatePosition + 1} of {candidateCount}
+            {candidatePosition + 1} de {candidateCount}
           </span>
-          <button className="secondary-button" onClick={previous} disabled={candidateCount < 2}>
-            Previous
+          <button className="icon-button" onClick={previous} disabled={candidateCount < 2}>
+            <IconChevronLeft />
+            <span className="sr-only">Anterior</span>
           </button>
-          <button className="secondary-button" onClick={next} disabled={candidateCount < 2}>
-            Next
+          <button className="icon-button" onClick={next} disabled={candidateCount < 2}>
+            <span className="sr-only">Siguiente</span>
+            <IconChevronRight />
           </button>
         </div>
       </div>
 
       <section className="duplicate-reasons">
-        <h4>Why it was flagged</h4>
+        <h4>Por qué se marcó</h4>
         <ul>
           {candidate.reasons.map((reason) => (
             <li key={reason.code}>
               <span>
                 {DUPLICATE_REASON_LABELS[reason.code] ??
-                  (reason.detail.trim() || 'Recorded detector reason')}
+                  (reason.detail.trim() || 'Motivo registrado por el detector')}
               </span>
               <code>{reason.code}</code>
             </li>
@@ -319,11 +478,11 @@ const DuplicateReviewPanel = ({
         </ul>
       </section>
 
-      <section className="duplicate-comparison" aria-label="Duplicate candidate comparison">
+      <section className="duplicate-comparison" aria-label="Comparación de candidato duplicado">
         <div className="duplicate-comparison-row comparison-heading">
-          <span>Field</span>
-          <strong>New observation</strong>
-          <strong>Existing comparable</strong>
+          <span>Campo</span>
+          <strong>Nueva observación</strong>
+          <strong>Comparable existente</strong>
         </div>
         {comparisonRows.map((row) => {
           const differs = row.source !== row.comparable;
@@ -339,12 +498,18 @@ const DuplicateReviewPanel = ({
 
       <section className="duplicate-evidence-grid">
         {[
-          { label: 'New observation evidence', observation: candidate.sourceObservation },
-          { label: 'Existing observation evidence', observation: candidate.comparableObservation },
+          { label: 'Evidencia de la nueva observación', observation: candidate.sourceObservation },
+          {
+            label: 'Evidencia de la observación existente',
+            observation: candidate.comparableObservation,
+          },
         ].map(({ label, observation }) => (
           <article key={label}>
             <strong>{label}</strong>
-            <p>{observation.rawEvidence ?? 'No text evidence was stored for this observation.'}</p>
+            <p>
+              {observation.rawEvidence ??
+                'No se almacenó evidencia de texto para esta observación.'}
+            </p>
             <small>
               {observation.observerName} · {new Date(observation.observedAt).toLocaleDateString()} ·{' '}
               {observation.source}
@@ -355,15 +520,15 @@ const DuplicateReviewPanel = ({
 
       {resolved ? (
         <div className="resolution-recorded">
-          <strong>Human decision: {DUPLICATE_RESOLUTION_LABELS[candidate.resolution]}</strong>
-          <span>Both original observations and their evidence remain unchanged.</span>
+          <strong>Decisión humana: {DUPLICATE_RESOLUTION_LABELS[candidate.resolution]}</strong>
+          <span>Ambas observaciones originales y su evidencia permanecen sin cambios.</span>
         </div>
       ) : (
         <fieldset className="duplicate-resolution">
-          <legend>Record a human decision</legend>
+          <legend>Registrar una decisión humana</legend>
           <p>
-            Select one option, then record it explicitly. This never merges or edits either
-            observation.
+            Seleccione una opción y regístrela explícitamente. Esto nunca combina ni edita ninguna
+            de las observaciones.
           </p>
           <div className="resolution-options">
             {DUPLICATE_RESOLUTION_OPTIONS.map((option) => (
@@ -387,7 +552,7 @@ const DuplicateReviewPanel = ({
             onClick={resolve}
             disabled={busy || selectedResolution === null}
           >
-            {busy ? 'Recording decision…' : 'Record human decision'}
+            {busy ? 'Registrando decisión…' : 'Registrar decisión humana'}
           </button>
         </fieldset>
       )}
@@ -395,7 +560,31 @@ const DuplicateReviewPanel = ({
   );
 };
 
-const RuntimeBadge = ({
+/** Human labels for the coded `InferenceRuntimeInfo.engine` enum. */
+const ENGINE_LABELS: Record<InferenceRuntimeInfo['engine'], string> = {
+  QVAC: 'QVAC',
+  'Development Mock': 'Simulador de desarrollo',
+};
+
+/** Human labels for the coded `InferenceRuntimeInfo.execution` enum. */
+const EXECUTION_LABELS: Record<InferenceRuntimeInfo['execution'], string> = {
+  'On-device': 'En el dispositivo',
+  'Development only': 'Solo desarrollo',
+};
+
+/** Human labels for the coded `InferenceRuntimeInfo.status` enum. */
+const RUNTIME_STATUS_LABELS: Record<InferenceRuntimeInfo['status'], string> = {
+  'model-not-loaded': 'Modelo no cargado',
+  downloading: 'Descargando',
+  loading: 'Cargando',
+  ready: 'Listo',
+  processing: 'Procesando',
+  error: 'Error',
+};
+
+/** A slim, collapsible strip rather than a prominent card: the engine's on-device status stays
+ * legible at a glance without competing with the capture and review work it supports. */
+const EngineStatus = ({
   runtime,
   initialize,
   busy,
@@ -404,33 +593,40 @@ const RuntimeBadge = ({
   initialize: () => void;
   busy: boolean;
 }): React.JSX.Element => {
-  if (!runtime) return <div className="runtime-card skeleton">Checking inference runtime…</div>;
+  if (!runtime)
+    return <div className="engine-status skeleton">Comprobando el motor de inferencia…</div>;
   const ready = runtime.status === 'ready';
+  const mock = runtime.engine === 'Development Mock';
   return (
-    <div className={`runtime-card ${runtime.engine === 'Development Mock' ? 'mock' : ''}`}>
-      <div className="runtime-title">
+    <details className={`engine-status ${mock ? 'mock' : ''}`}>
+      <summary>
         <span className={`status-dot ${ready ? 'ready' : runtime.status}`} />
-        <strong>Inference Engine: {runtime.engine}</strong>
-        <span className="runtime-state">{runtime.status.replaceAll('-', ' ')}</span>
+        <span className="engine-name">Motor: {ENGINE_LABELS[runtime.engine]}</span>
+        <span className="engine-state">{RUNTIME_STATUS_LABELS[runtime.status]}</span>
+        {mock && <span className="status-chip chip-estimated">Simulador</span>}
+      </summary>
+      <div className="engine-detail">
+        <div className="runtime-grid">
+          <span>Ejecución</span>
+          <b>{EXECUTION_LABELS[runtime.execution]}</b>
+          <span>Modelo</span>
+          <b>{runtime.model}</b>
+          <span>Red para inferencia</span>
+          <b>{runtime.networkRequiredForInference ? 'Sí' : 'No'}</b>
+        </div>
+        {runtime.detail && <p>{runtime.detail}</p>}
+        {runtime.engine === 'QVAC' && !ready && (
+          <button className="small-button" onClick={initialize} disabled={busy}>
+            {busy ? 'Inicializando…' : 'Inicializar modelo local'}
+          </button>
+        )}
+        {mock && (
+          <div className="mock-warning">
+            Simulador de desarrollo — no válido para la demo final de QVAC
+          </div>
+        )}
       </div>
-      <div className="runtime-grid">
-        <span>Execution</span>
-        <b>{runtime.execution}</b>
-        <span>Model</span>
-        <b>{runtime.model}</b>
-        <span>Network for inference</span>
-        <b>{runtime.networkRequiredForInference ? 'Yes' : 'No'}</b>
-      </div>
-      {runtime.detail && <p>{runtime.detail}</p>}
-      {runtime.engine === 'QVAC' && !ready && (
-        <button className="small-button" onClick={initialize} disabled={busy}>
-          {busy ? 'Initializing…' : 'Initialize local model'}
-        </button>
-      )}
-      {runtime.engine === 'Development Mock' && (
-        <div className="mock-warning">Development Mock — not valid for the final QVAC demo</div>
-      )}
-    </div>
+    </details>
   );
 };
 
@@ -453,6 +649,14 @@ interface EquipmentEdit {
 }
 
 type EquipmentEditField = 'modality' | 'quantity' | 'manufacturer' | 'model' | 'age' | 'notes';
+
+const EQUIPMENT_EDIT_FIELD_LABELS: Record<'quantity' | 'manufacturer' | 'model' | 'notes', string> =
+  {
+    quantity: 'cantidad',
+    manufacturer: 'fabricante',
+    model: 'modelo',
+    notes: 'notas',
+  };
 
 interface EditState {
   customer: { name: string; city: string; country: string };
@@ -520,6 +724,108 @@ const CapturePage = ({
   const [editing, setEditing] = useState(false);
   const [editState, setEditState] = useState<EditState | null>(null);
   const [editOriginal, setEditOriginal] = useState<EditState | null>(null);
+  /**
+   * The message count at the moment the observer declined the review summary. The confirmation
+   * ask stays dismissed only while the transcript hasn't grown since — any new message (a typed
+   * correction, a follow-up answer, an applied edit) means a new round is underway, so the ask
+   * re-arms itself once the backend produces a fresh summary to confirm. Tracking a snapshot
+   * count rather than a plain boolean means this needs no server-side "rejected" state at all.
+   */
+  const [reviewDismissedAt, setReviewDismissedAt] = useState<number | null>(null);
+  // Adjusting state during render (React's documented pattern for resetting state when a prop
+  // changes) rather than in an effect, so a brand-new capture session never carries over a
+  // dismissal from the session before it.
+  const [reviewDismissedForCapture, setReviewDismissedForCapture] = useState(capture?.id);
+  if (capture?.id !== reviewDismissedForCapture) {
+    setReviewDismissedForCapture(capture?.id);
+    setReviewDismissedAt(null);
+  }
+  const stageIndex = captureStageIndex(capture);
+  const transcriptLogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = transcriptLogRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [capture?.messages.length]);
+
+  const reviewDismissed =
+    reviewDismissedAt !== null && capture?.messages.length === reviewDismissedAt;
+
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const micStreamRef = useRef<MediaStream | null>(null);
+
+  const releaseMicrophone = (): void => {
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
+  };
+
+  const finishRecording = async (): Promise<void> => {
+    setVoiceState('transcribing');
+    try {
+      const blob = new Blob(audioChunksRef.current, {
+        type: mediaRecorderRef.current?.mimeType || 'audio/webm',
+      });
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioContext = new AudioContext();
+      let wavBytes: Uint8Array;
+      try {
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        wavBytes = encodeWavFromAudioBuffer(audioBuffer);
+      } finally {
+        await audioContext.close();
+      }
+      const result = await window.installedBaseApi.transcribeVoice(wavBytes);
+      if (!result.ok) throw new Error(result.error.message);
+      const transcript = result.data.text.trim();
+      if (transcript) {
+        setInput((current) => (current.trim() ? `${current.trim()} ${transcript}` : transcript));
+      }
+      setVoiceState('idle');
+    } catch (error) {
+      setVoiceError(
+        error instanceof Error ? error.message : 'No se pudo transcribir el audio grabado.',
+      );
+      setVoiceState('error');
+    }
+  };
+
+  const startRecording = async (): Promise<void> => {
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        releaseMicrophone();
+        void finishRecording();
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setVoiceState('recording');
+    } catch {
+      releaseMicrophone();
+      setVoiceState('permission-denied');
+    }
+  };
+
+  const toggleRecording = (): void => {
+    if (voiceState === 'recording') {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    void startRecording();
+  };
+
+  useEffect(() => releaseMicrophone, []);
+
   const send = (): void => {
     if (!input.trim()) return;
     submit(input.trim());
@@ -593,282 +899,365 @@ const CapturePage = ({
   };
 
   return (
-    <div className="capture-layout">
-      <section className="conversation-panel">
-        <div className="page-heading">
-          <div>
-            <span className="eyebrow">Capture observation</span>
-            <h1>Turn field notes into traceable evidence.</h1>
+    <div className="capture-screen">
+      <header className="capture-topbar">
+        <div className="capture-topbar-row">
+          <div className="capture-title">
+            <h1>Capturar observación</h1>
+            <p className="page-subtitle">Convierta notas de campo en evidencia trazable.</p>
           </div>
-          {capture?.draft.state === 'SAVED' && (
-            <button className="secondary-button" onClick={startNew}>
-              New capture
-            </button>
-          )}
-        </div>
-        <RuntimeBadge runtime={runtime} initialize={initializeRuntime} busy={busy} />
-        <div className="conversation">
-          {!capture?.messages.length && (
-            <div className="empty-conversation">
-              <div className="empty-icon">✦</div>
-              <strong>Start with what you observed.</strong>
-              <p>
-                Facility, modalities and quantities are enough to begin. Missing details come next.
-              </p>
-              <button
-                className="example-prompt"
-                onClick={() =>
-                  setInput(
-                    'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
-                  )
-                }
-              >
-                Use demo observation
-              </button>
-            </div>
-          )}
-          {capture?.messages.map((message) => (
-            <div key={message.id} className={`message-row ${message.role.toLowerCase()}`}>
-              <div className="message-label">{message.role}</div>
-              <div className="message-bubble">{message.content}</div>
-            </div>
-          ))}
-        </div>
-        <div className="composer">
-          <button className="mic-button" disabled title="QVAC speech-to-text is a future slice">
-            ◉
-          </button>
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
-            }}
-            placeholder="Describe what you saw, or answer the follow-up…"
-            rows={2}
-            disabled={busy || capture?.draft.state === 'SAVED'}
-          />
-          <button className="primary-button" onClick={send} disabled={busy || !input.trim()}>
-            {busy ? 'Working…' : 'Send'}
-          </button>
-        </div>
-        <div className="privacy-note">
-          Local-first · raw observations stay on this device · no cloud AI
-        </div>
-      </section>
-
-      <aside className="structured-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="eyebrow">Structured draft</span>
-            <h2>Review before saving</h2>
-          </div>
-          {capture &&
-            capture.draft.equipment.length > 0 &&
-            !editing &&
-            capture.draft.state !== 'SAVED' && (
-              <button className="text-button" onClick={beginEdit}>
-                Edit
+          <div className="capture-topbar-actions">
+            <EngineStatus runtime={runtime} initialize={initializeRuntime} busy={busy} />
+            {capture?.draft.state === 'SAVED' && (
+              <button className="secondary-button" onClick={startNew}>
+                Nueva captura
               </button>
             )}
+          </div>
         </div>
-        {!capture || capture.draft.equipment.length === 0 ? (
-          <div className="structured-empty">Extracted fields will appear here.</div>
-        ) : editing && editState ? (
-          <div className="edit-form">
-            <label>
-              Facility
-              <input
-                value={editState.customer.name}
-                onChange={(event) =>
-                  setEditState({
-                    ...editState,
-                    customer: { ...editState.customer, name: event.target.value },
-                  })
-                }
-              />
-            </label>
-            <div className="two-columns">
-              <label>
-                City
-                <input
-                  value={editState.customer.city}
-                  onChange={(event) =>
-                    setEditState({
-                      ...editState,
-                      customer: { ...editState.customer, city: event.target.value },
-                    })
+        <ol className="pipeline-tracker" aria-label="Progreso de la captura">
+          {CAPTURE_STAGES.map((stage, index) => (
+            <li
+              key={stage.key}
+              className={index < stageIndex ? 'done' : index === stageIndex ? 'active' : 'upcoming'}
+            >
+              <span className="pipeline-index">{index + 1}</span>
+              <span className="pipeline-label">{stage.label}</span>
+            </li>
+          ))}
+        </ol>
+      </header>
+
+      <div className="capture-layout">
+        <section className="transcript-panel">
+          <div className="transcript-log" ref={transcriptLogRef}>
+            {!capture?.messages.length && (
+              <div className="transcript-empty">
+                <IconInbox className="transcript-empty-icon" />
+                <strong>Comience con lo que observó.</strong>
+                <p>
+                  La instalación, las modalidades y las cantidades bastan para empezar. Los detalles
+                  faltantes se preguntan después.
+                </p>
+                <button
+                  className="example-prompt"
+                  onClick={() =>
+                    setInput(
+                      'Estoy en el Hospital DemoCare Pacific, en Panama. Tienen dos resonadores y un tomógrafo.',
+                    )
                   }
-                />
-              </label>
-              <label>
-                Country
-                <input
-                  value={editState.customer.country}
-                  onChange={(event) =>
-                    setEditState({
-                      ...editState,
-                      customer: { ...editState.customer, country: event.target.value },
-                    })
-                  }
-                />
-              </label>
-            </div>
-            {editState.equipment.map((item, index) => (
-              <div className="edit-equipment" key={item.id}>
-                <strong>Equipment group {index + 1}</strong>
-                <div className="two-columns">
-                  <label>
-                    modality
-                    <select
-                      value={item.modality}
-                      onChange={(event) =>
-                        updateEquipmentField(item.id, 'modality', event.target.value)
-                      }
-                    >
-                      <option value="">Unknown (acknowledged)</option>
-                      {MODALITIES.map((modality) => (
-                        <option key={modality} value={modality}>
-                          {modality}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {(['quantity', 'manufacturer', 'model', 'notes'] as const).map((field) => (
-                    <label key={field}>
-                      {field}
-                      <input
-                        value={item[field]}
-                        onChange={(event) =>
-                          updateEquipmentField(item.id, field, event.target.value)
-                        }
-                      />
-                    </label>
-                  ))}
-                  <label>
-                    age
-                    {item.ageKind === 'preserved' ? (
-                      <div className="preserved-age">
-                        <span>{item.ageLabel}</span>
-                        <button
-                          type="button"
-                          className="text-button"
-                          onClick={() => clearPreservedAge(item.id)}
-                        >
-                          Clear age
-                        </button>
-                      </div>
-                    ) : (
-                      <input
-                        value={item.age}
-                        onChange={(event) =>
-                          updateEquipmentField(item.id, 'age', event.target.value)
-                        }
-                      />
-                    )}
-                  </label>
-                </div>
+                >
+                  Usar observación de demostración
+                </button>
+              </div>
+            )}
+            {capture?.messages.map((message) => (
+              <div
+                key={message.id}
+                className={`transcript-entry role-${message.role.toLowerCase()}`}
+              >
+                <span className="transcript-role">{MESSAGE_ROLE_LABELS[message.role]}</span>
+                <p className="transcript-text">{message.content}</p>
               </div>
             ))}
-            <div className="action-row">
-              <button className="secondary-button" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-              <button className="primary-button" onClick={applyEdit}>
-                Apply corrections
-              </button>
-            </div>
           </div>
-        ) : (
-          <>
-            <div className="facility-summary">
-              <span>Facility</span>
-              <strong>{fieldText(capture.draft.customer.name)}</strong>
-              <small>
-                {fieldText(capture.draft.customer.city)},{' '}
-                {fieldText(capture.draft.customer.country)}
-              </small>
-            </div>
-            <div className="equipment-list">
-              {capture.draft.equipment.map((item) => (
-                <article className="equipment-card" key={item.id}>
-                  <div className="equipment-title">
-                    <span>{fieldText(item.modality)}</span>
-                    <b>× {fieldText(item.quantity)}</b>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>Brand</dt>
-                      <dd>{fieldText(item.manufacturer)}</dd>
-                    </div>
-                    <div>
-                      <dt>Model</dt>
-                      <dd>{fieldText(item.model)}</dd>
-                    </div>
-                    <div>
-                      <dt>Age</dt>
-                      <dd>{fieldText(item.approximateAge, ageText)}</dd>
-                    </div>
-                  </dl>
-                  {item.contradictions.map((contradiction) => (
-                    <p className="contradiction-note" key={contradiction.field}>
-                      <b>Two answers for {contradictionFieldLabel(contradiction.field)}.</b> You
-                      said “{contradiction.previousText}”, then “{contradiction.currentText}”. Both
-                      are kept as evidence. Answer the question to say which one to use.
-                    </p>
-                  ))}
-                </article>
-              ))}
-            </div>
-            <div className={`capture-state state-${capture.draft.state.toLowerCase()}`}>
-              <span>Capture state</span>
-              <strong>{capture.draft.state.replaceAll('_', ' ')}</strong>
-            </div>
-            {capture.pendingQuestion && (
-              <div className="next-question">
-                <p>{capture.pendingQuestion.text}</p>
-                <span>{capture.pendingQuestion.priority.toLowerCase()} question</span>
-              </div>
-            )}
-            <div className="stacked-actions">
-              {capture.draft.state === 'NEEDS_FOLLOW_UP' &&
-                capture.draft.equipment.every((item) => item.contradictions.length === 0) && (
-                  <button className="secondary-button" onClick={review} disabled={busy}>
-                    Review current information
-                  </button>
-                )}
-              {capture.draft.state === 'READY_FOR_REVIEW' && !capture.reviewConfirmed && (
-                <div className="confirmation-request">
-                  <p>The agent read the observation back to you. Confirm it before it is saved.</p>
-                  <div className="action-row">
-                    <button className="primary-button" onClick={confirm} disabled={busy}>
-                      Yes, that is correct
-                    </button>
-                    <button
-                      className="secondary-button"
-                      onClick={() => setEditing(true)}
-                      disabled={busy}
-                    >
-                      No, correct it
-                    </button>
-                  </div>
-                </div>
+          <div className="composer">
+            <button
+              className={`mic-button ${voiceState === 'recording' ? 'recording' : ''}`}
+              onClick={toggleRecording}
+              disabled={busy || capture?.draft.state === 'SAVED' || voiceState === 'transcribing'}
+              title={
+                voiceState === 'recording'
+                  ? 'Detener grabación'
+                  : 'Dictar con el micrófono (transcripción local con QVAC)'
+              }
+            >
+              <IconMic />
+            </button>
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="Describa lo que vio, o responda el seguimiento…"
+              rows={2}
+              disabled={busy || capture?.draft.state === 'SAVED'}
+            />
+            <button className="primary-button" onClick={send} disabled={busy || !input.trim()}>
+              <IconSend className="btn-icon" />
+              {busy ? 'Procesando…' : 'Enviar'}
+            </button>
+          </div>
+          {voiceState !== 'idle' && (
+            <div className={`voice-status voice-status-${voiceState}`}>
+              {voiceState === 'recording' && (
+                <span>Grabando… toque el micrófono para detener y transcribir localmente.</span>
               )}
-              {capture.draft.state === 'READY_FOR_REVIEW' && capture.reviewConfirmed && (
-                <button className="save-button" onClick={save} disabled={busy}>
-                  Save observation
+              {voiceState === 'transcribing' && (
+                <span>Transcribiendo localmente con QVAC (sin conexión a internet)…</span>
+              )}
+              {voiceState === 'permission-denied' && (
+                <span>
+                  Permiso de micrófono denegado. Actívelo en la configuración del sistema e
+                  inténtelo de nuevo.
+                </span>
+              )}
+              {voiceState === 'error' && <span>No se pudo transcribir el audio: {voiceError}</span>}
+            </div>
+          )}
+          <div className="privacy-note">
+            Local-first · las observaciones en bruto permanecen en este dispositivo · sin IA en la
+            nube
+          </div>
+        </section>
+
+        <aside className="ledger-panel">
+          <div className="ledger-panel-heading">
+            <div>
+              <h2>Registro estructurado</h2>
+              <p className="page-subtitle">Revisar antes de guardar.</p>
+            </div>
+            {capture &&
+              capture.draft.equipment.length > 0 &&
+              !editing &&
+              capture.draft.state !== 'SAVED' && (
+                <button className="text-button" onClick={beginEdit}>
+                  Editar
                 </button>
               )}
-              {capture.draft.state === 'SAVED' && (
-                <div className="saved-banner">✓ Evidence saved locally</div>
-              )}
+          </div>
+          {!capture || capture.draft.equipment.length === 0 ? (
+            <div className="structured-empty">Los campos extraídos aparecerán aquí.</div>
+          ) : editing && editState ? (
+            <div className="edit-form">
+              <label>
+                Centro
+                <input
+                  value={editState.customer.name}
+                  onChange={(event) =>
+                    setEditState({
+                      ...editState,
+                      customer: { ...editState.customer, name: event.target.value },
+                    })
+                  }
+                />
+              </label>
+              <div className="two-columns">
+                <label>
+                  Ciudad
+                  <input
+                    value={editState.customer.city}
+                    onChange={(event) =>
+                      setEditState({
+                        ...editState,
+                        customer: { ...editState.customer, city: event.target.value },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  País
+                  <input
+                    value={editState.customer.country}
+                    onChange={(event) =>
+                      setEditState({
+                        ...editState,
+                        customer: { ...editState.customer, country: event.target.value },
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              {editState.equipment.map((item, index) => (
+                <div className="edit-equipment" key={item.id}>
+                  <strong>Grupo de equipos {index + 1}</strong>
+                  <div className="two-columns">
+                    <label>
+                      modalidad
+                      <select
+                        value={item.modality}
+                        onChange={(event) =>
+                          updateEquipmentField(item.id, 'modality', event.target.value)
+                        }
+                      >
+                        <option value="">Desconocido (declarado)</option>
+                        {MODALITIES.map((modality) => (
+                          <option key={modality} value={modality}>
+                            {modality}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {(['quantity', 'manufacturer', 'model', 'notes'] as const).map((field) => (
+                      <label key={field}>
+                        {EQUIPMENT_EDIT_FIELD_LABELS[field]}
+                        <input
+                          value={item[field]}
+                          onChange={(event) =>
+                            updateEquipmentField(item.id, field, event.target.value)
+                          }
+                        />
+                      </label>
+                    ))}
+                    <label>
+                      antigüedad
+                      {item.ageKind === 'preserved' ? (
+                        <div className="preserved-age">
+                          <span>{item.ageLabel}</span>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => clearPreservedAge(item.id)}
+                          >
+                            Borrar antigüedad
+                          </button>
+                        </div>
+                      ) : (
+                        <input
+                          value={item.age}
+                          onChange={(event) =>
+                            updateEquipmentField(item.id, 'age', event.target.value)
+                          }
+                        />
+                      )}
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <div className="action-row">
+                <button className="secondary-button" onClick={() => setEditing(false)}>
+                  Cancelar
+                </button>
+                <button className="primary-button" onClick={applyEdit}>
+                  Aplicar correcciones
+                </button>
+              </div>
             </div>
-          </>
-        )}
-      </aside>
+          ) : (
+            <>
+              <div className="facility-letterhead">
+                <IconFacility className="facility-icon" />
+                <div>
+                  <strong>{fieldText(capture.draft.customer.name)}</strong>
+                  <span>
+                    {fieldText(capture.draft.customer.city)},{' '}
+                    {fieldText(capture.draft.customer.country)}
+                  </span>
+                </div>
+              </div>
+              <table className="equipment-ledger">
+                <thead>
+                  <tr>
+                    <th>Modalidad</th>
+                    <th>Cant.</th>
+                    <th>Fabricante</th>
+                    <th>Modelo</th>
+                    <th>Antigüedad</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {capture.draft.equipment.map((item) => (
+                    <Fragment key={item.id}>
+                      <tr>
+                        <td>{fieldText(item.modality)}</td>
+                        <td className="numeric">{fieldText(item.quantity)}</td>
+                        <td>{fieldText(item.manufacturer)}</td>
+                        <td>{fieldText(item.model)}</td>
+                        <td>{fieldText(item.approximateAge, ageText)}</td>
+                      </tr>
+                      {item.contradictions.map((contradiction) => (
+                        <tr className="contradiction-row" key={`${item.id}-${contradiction.field}`}>
+                          <td colSpan={5}>
+                            <p className="contradiction-note">
+                              <IconFlag className="contradiction-icon" />
+                              <span>
+                                <b>
+                                  Dos respuestas para {contradictionFieldLabel(contradiction.field)}
+                                  .
+                                </b>{' '}
+                                Dijo «{contradiction.previousText}», luego «
+                                {contradiction.currentText}». Ambas se conservan como evidencia.
+                                Responda la pregunta para indicar cuál usar.
+                              </span>
+                            </p>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+              <div className="signoff-block">
+                <div
+                  className={`status-chip capture-state ${CAPTURE_STATE_CHIP_CLASS[capture.draft.state]}`}
+                >
+                  {CAPTURE_STATE_LABELS[capture.draft.state]}
+                </div>
+                {capture.pendingQuestion && (
+                  <div className="next-question">
+                    <span>
+                      Pregunta {QUESTION_PRIORITY_LABELS[capture.pendingQuestion.priority]}
+                    </span>
+                    <p>{capture.pendingQuestion.text}</p>
+                  </div>
+                )}
+                <div className="stacked-actions">
+                  {capture.draft.state === 'NEEDS_FOLLOW_UP' &&
+                    capture.draft.equipment.every((item) => item.contradictions.length === 0) && (
+                      <button className="secondary-button" onClick={review} disabled={busy}>
+                        Revisar información actual
+                      </button>
+                    )}
+                  {capture.draft.state === 'READY_FOR_REVIEW' &&
+                    !capture.reviewConfirmed &&
+                    !reviewDismissed && (
+                      <div className="confirmation-request">
+                        <p>
+                          El agente le leyó la observación de vuelta. Confírmela antes de que se
+                          guarde.
+                        </p>
+                        <div className="action-row">
+                          <button className="primary-button" onClick={confirm} disabled={busy}>
+                            Sí, es correcto
+                          </button>
+                          <button
+                            className="secondary-button"
+                            onClick={() => setReviewDismissedAt(capture.messages.length)}
+                            disabled={busy}
+                          >
+                            No, corregirlo
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  {capture.draft.state === 'READY_FOR_REVIEW' &&
+                    !capture.reviewConfirmed &&
+                    reviewDismissed && (
+                      <p className="review-dismissed-note">
+                        Corrección pendiente — descríbala en el chat o use «Editar».
+                      </p>
+                    )}
+                  {capture.draft.state === 'READY_FOR_REVIEW' && capture.reviewConfirmed && (
+                    <button className="save-button" onClick={save} disabled={busy}>
+                      Guardar observación
+                    </button>
+                  )}
+                  {capture.draft.state === 'SAVED' && (
+                    <div className="saved-banner">
+                      <IconCheck className="btn-icon" />
+                      Evidencia guardada localmente
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
     </div>
   );
 };
@@ -914,10 +1303,9 @@ const CustomersPage = ({
 
   return (
     <div className="customers-layout">
-      <aside className="customer-list-panel">
-        <span className="eyebrow">Customer 360</span>
-        <h1>Evidence-backed accounts</h1>
-        <div className="customer-list">
+      <aside className="customer-directory">
+        <h1>Cuentas respaldadas por evidencia</h1>
+        <div className="customer-index">
           {customers.map((customer) => (
             <button
               key={customer.id}
@@ -926,7 +1314,7 @@ const CustomersPage = ({
             >
               <strong>{customer.name}</strong>
               <span>
-                {customer.city ?? 'Unknown city'} · {customer.country ?? 'Unknown country'}
+                {customer.city ?? 'Ciudad desconocida'} · {customer.country ?? 'País desconocido'}
               </span>
             </button>
           ))}
@@ -934,128 +1322,178 @@ const CustomersPage = ({
       </aside>
       <section className="customer-detail">
         {!selected ? (
-          <div className="structured-empty">Select a customer.</div>
+          <div className="structured-empty">Seleccione un cliente.</div>
         ) : (
           (() => {
             const sessionEvidence = groupEvidenceBySession(selected.evidence);
             const equipmentLabels = equipmentLabelsById(selected.installedBase);
+            const pendingDuplicates = selected.duplicateCandidates.pending.length;
+            const resolvedDuplicates = selected.duplicateCandidates.resolved.length;
             return (
               <>
-                <div className="customer-hero">
+                <div className="facility-letterhead account-letterhead">
+                  <IconFacility className="facility-icon" />
                   <div>
-                    <span className="eyebrow">Facility</span>
                     <h2>{selected.customer.name}</h2>
                     <p>
-                      {selected.customer.city ?? 'Unknown city'},{' '}
-                      {selected.customer.country ?? 'Unknown country'}
+                      {selected.customer.city ?? 'Ciudad desconocida'},{' '}
+                      {selected.customer.country ?? 'País desconocido'}
                     </p>
                   </div>
-                  <div className="evidence-pill">
-                    {plural(sessionEvidence.length, 'supporting visit', 'supporting visits')}
+                </div>
+                <div className="account-stats">
+                  <div>
+                    <strong>{sessionEvidence.length}</strong>
+                    <span>
+                      {plural(sessionEvidence.length, 'visita de respaldo', 'visitas de respaldo')}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{selected.installedBase.length}</strong>
+                    <span>
+                      {plural(
+                        selected.installedBase.length,
+                        'grupo de equipos',
+                        'grupos de equipos',
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{pendingDuplicates}</strong>
+                    <span>
+                      {plural(pendingDuplicates, 'candidato pendiente', 'candidatos pendientes')}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{resolvedDuplicates}</strong>
+                    <span>
+                      {plural(resolvedDuplicates, 'candidato resuelto', 'candidatos resueltos')}
+                    </span>
                   </div>
                 </div>
+
                 <div className="section-title">
-                  <h3>Current installed-base projection</h3>
+                  <h3>Proyección actual del parque instalado</h3>
                   <span>{selected.projectionStrategy}</span>
                 </div>
-                <div className="projection-grid">
+                <div className="installed-base-ledger">
+                  <div className="ledger-head-row">
+                    <span>Modalidad</span>
+                    <span>Fabricante / Modelo</span>
+                    <span>Cant.</span>
+                    <span>Antigüedad</span>
+                    <span>Confianza</span>
+                    <span>Estado</span>
+                    <span aria-hidden="true" />
+                  </div>
                   {selected.installedBase.map((item) => {
                     const rawModalityDiffers =
                       item.rawModality !== null &&
                       item.rawModality.trim().toLowerCase() !== item.modality.toLowerCase();
                     const fieldEntries = Object.entries(item.fieldProvenance);
                     return (
-                      <article className="projection-card" key={item.projectionKey}>
-                        <div className="projection-top">
-                          <span>{item.modality}</span>
-                          <b>× {item.quantity ?? '?'}</b>
-                        </div>
-                        {rawModalityDiffers && (
-                          <p className="raw-modality-note">
-                            Normalized: {item.modality} · Captured as: “{item.rawModality}”
-                          </p>
-                        )}
-                        <h4>
-                          {item.manufacturer ?? 'Unknown brand'} <span>{item.model ?? ''}</span>
-                        </h4>
-                        <dl>
-                          <div>
-                            <dt>Approx. age</dt>
-                            <dd>{ageText(item.approximateAge)}</dd>
-                          </div>
-                          <div>
-                            <dt>Installation</dt>
-                            <dd>{installationText(item.installationEstimate)}</dd>
-                          </div>
-                          <div>
-                            <dt>Confidence</dt>
-                            <dd>
-                              {item.confidence.level}
-                              {item.confidence.reasons.length > 0 && (
-                                <ul className="confidence-reasons">
-                                  {item.confidence.reasons.map((reason) => (
-                                    <li key={reason.code}>
-                                      {CONFIDENCE_REASON_LABELS[reason.code] ?? reason.code}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Status</dt>
-                            <dd>
-                              {item.status}
-                              <span className="status-explain">
-                                {STATUS_EXPLANATIONS[item.status]}
-                              </span>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Last observed</dt>
-                            <dd>{plural(item.daysSinceLastObservation, 'day')} ago</dd>
-                          </div>
-                          <div>
-                            <dt>Freshness</dt>
-                            <dd>{item.freshnessStatus}</dd>
-                          </div>
-                        </dl>
-                        {fieldEntries.length > 0 && (
-                          <details className="field-provenance">
-                            <summary>Field details</summary>
-                            <ul>
-                              {fieldEntries.map(([field, provenance]) => (
-                                <li key={field}>
-                                  <strong>{FIELD_LABELS[field] ?? field}</strong>
-                                  <span
-                                    className={`provenance-badge knowledge-${provenance.knowledgeState}`}
-                                  >
-                                    {KNOWLEDGE_STATE_LABELS[provenance.knowledgeState]}
-                                  </span>
-                                  {provenance.knowledgeState === 'Known' && (
-                                    <span className="provenance-badge certainty">
-                                      {certaintyText(provenance.certainty)}
-                                    </span>
-                                  )}
-                                  <span className="provenance-origin">{provenance.origin}</span>
-                                  {wasCorrected(provenance.evidenceIds) && (
-                                    <span className="provenance-badge corrected">Corrected</span>
-                                  )}
+                      <details className="ledger-row" key={item.projectionKey}>
+                        <summary className="ledger-row-summary">
+                          <span className="ledger-cell">
+                            {item.modality}
+                            {rawModalityDiffers && (
+                              <em className="raw-modality-note">
+                                Capturado como «{item.rawModality}»
+                              </em>
+                            )}
+                          </span>
+                          <span className="ledger-cell">
+                            {item.manufacturer ?? 'Fabricante desconocido'}
+                            {item.model && <small> {item.model}</small>}
+                          </span>
+                          <span className="ledger-cell numeric">{item.quantity ?? '?'}</span>
+                          <span className="ledger-cell">{ageText(item.approximateAge)}</span>
+                          <span className="ledger-cell">
+                            <span
+                              className={`status-chip ${CONFIDENCE_CHIP_CLASS[item.confidence.level]}`}
+                            >
+                              {CONFIDENCE_LEVEL_LABELS[item.confidence.level]}
+                            </span>
+                          </span>
+                          <span className="ledger-cell">
+                            <span className={`status-chip ${STATUS_CHIP_CLASS[item.status]}`}>
+                              {STATUS_LABELS[item.status]}
+                            </span>
+                          </span>
+                          <IconChevronRight className="ledger-row-chevron" />
+                        </summary>
+                        <div className="ledger-row-detail">
+                          <dl>
+                            <div>
+                              <dt>Instalación</dt>
+                              <dd>{installationText(item.installationEstimate)}</dd>
+                            </div>
+                            <div>
+                              <dt>Última observación</dt>
+                              <dd>Hace {plural(item.daysSinceLastObservation, 'día', 'días')}</dd>
+                            </div>
+                            <div>
+                              <dt>Vigencia</dt>
+                              <dd>{FRESHNESS_STATUS_LABELS[item.freshnessStatus]}</dd>
+                            </div>
+                            <div>
+                              <dt>Respaldado por</dt>
+                              <dd>
+                                {plural(
+                                  item.contributingObservationIds.length,
+                                  'observación',
+                                  'observaciones',
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                          <p className="status-explain">{STATUS_EXPLANATIONS[item.status]}</p>
+                          {item.confidence.reasons.length > 0 && (
+                            <ul className="confidence-reasons">
+                              {item.confidence.reasons.map((reason) => (
+                                <li key={reason.code}>
+                                  {CONFIDENCE_REASON_LABELS[reason.code] ?? reason.code}
                                 </li>
                               ))}
                             </ul>
-                          </details>
-                        )}
-                        <small>
-                          Backed by {plural(item.contributingObservationIds.length, 'observation')}
-                        </small>
-                      </article>
+                          )}
+                          {fieldEntries.length > 0 && (
+                            <div className="field-provenance">
+                              <span className="field-label">Detalles del campo</span>
+                              <ul>
+                                {fieldEntries.map(([field, provenance]) => (
+                                  <li key={field}>
+                                    <strong>{FIELD_LABELS[field] ?? field}</strong>
+                                    <span
+                                      className={`provenance-badge knowledge-${provenance.knowledgeState}`}
+                                    >
+                                      {KNOWLEDGE_STATE_LABELS[provenance.knowledgeState]}
+                                    </span>
+                                    {provenance.knowledgeState === 'Known' && (
+                                      <span className="provenance-badge certainty">
+                                        {certaintyText(provenance.certainty)}
+                                      </span>
+                                    )}
+                                    <span className="provenance-origin">
+                                      {FIELD_ORIGIN_LABELS[provenance.origin]}
+                                    </span>
+                                    {wasCorrected(provenance.evidenceIds) && (
+                                      <span className="provenance-badge corrected">Corregido</span>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </details>
                     );
                   })}
                 </div>
+
                 <div className="section-title">
-                  <h3>Supporting observations</h3>
-                  <span>Append-only evidence, one row per visit</span>
+                  <h3>Observaciones de respaldo</h3>
+                  <span>Evidencia de solo adición, una fila por visita</span>
                 </div>
                 <div className="evidence-table">
                   {sessionEvidence.map((session) => (
@@ -1066,7 +1504,7 @@ const CustomersPage = ({
                           {session.observerName} · {session.source}
                         </span>
                       </div>
-                      <p className="evidence-text">{session.rawInput ?? 'Non-text evidence'}</p>
+                      <p className="evidence-text">{session.rawInput ?? 'Evidencia sin texto'}</p>
                       <div
                         className="evidence-supports"
                         title={session.equipmentObservationIds.join(', ')}
@@ -1074,7 +1512,7 @@ const CustomersPage = ({
                         {[
                           ...new Set(
                             session.equipmentObservationIds.map(
-                              (id) => equipmentLabels.get(id) ?? 'Unmatched equipment',
+                              (id) => equipmentLabels.get(id) ?? 'Equipo sin coincidencia',
                             ),
                           ),
                         ].map((label) => (
@@ -1086,30 +1524,28 @@ const CustomersPage = ({
                     </div>
                   ))}
                 </div>
-                {selected.duplicateCandidates.pending.length +
-                  selected.duplicateCandidates.resolved.length >
-                  0 && (
-                  <div className="duplicate-box">
+                {pendingDuplicates + resolvedDuplicates > 0 && (
+                  <div className="duplicate-notice">
                     <div>
-                      <strong>Possible matches detected</strong>
+                      <strong>Se detectaron posibles coincidencias</strong>
                       <span>
-                        {plural(selected.duplicateCandidates.pending.length, 'pending candidate')} ·{' '}
-                        {plural(selected.duplicateCandidates.resolved.length, 'resolved candidate')}
-                        . Never merged automatically.
+                        {plural(pendingDuplicates, 'candidato pendiente', 'candidatos pendientes')}{' '}
+                        · {plural(resolvedDuplicates, 'candidato resuelto', 'candidatos resueltos')}
+                        . Nunca se combinan automáticamente.
                       </span>
                     </div>
-                    <div className="duplicate-box-actions">
-                      {selected.duplicateCandidates.pending.length > 0 && (
+                    <div className="duplicate-notice-actions">
+                      {pendingDuplicates > 0 && (
                         <button className="primary-button" onClick={() => openReviews('pending')}>
-                          Review possible matches
+                          Revisar posibles coincidencias
                         </button>
                       )}
-                      {selected.duplicateCandidates.resolved.length > 0 && (
+                      {resolvedDuplicates > 0 && (
                         <button
                           className="secondary-button"
                           onClick={() => openReviews('resolved')}
                         >
-                          View resolved
+                          Ver resueltos
                         </button>
                       )}
                     </div>
@@ -1118,12 +1554,9 @@ const CustomersPage = ({
                 {reviewing && (
                   <section className="duplicate-review-panel">
                     <div className="duplicate-review-heading">
-                      <div>
-                        <span className="eyebrow">Human review</span>
-                        <h3>Possible equipment matches</h3>
-                      </div>
+                      <h3>Revisión humana: posibles coincidencias de equipos</h3>
                       <button className="secondary-button" onClick={() => setReviewing(false)}>
-                        Back to Customer 360
+                        Volver a Customer 360
                       </button>
                     </div>
                     <div className="duplicate-review-tabs">
@@ -1131,13 +1564,13 @@ const CustomersPage = ({
                         className={reviewTab === 'pending' ? 'active' : ''}
                         onClick={() => openReviews('pending')}
                       >
-                        Pending ({selected.duplicateCandidates.pending.length})
+                        Pendientes ({selected.duplicateCandidates.pending.length})
                       </button>
                       <button
                         className={reviewTab === 'resolved' ? 'active' : ''}
                         onClick={() => openReviews('resolved')}
                       >
-                        Resolved ({selected.duplicateCandidates.resolved.length})
+                        Resueltos ({selected.duplicateCandidates.resolved.length})
                       </button>
                     </div>
                     {candidate ? (
@@ -1167,8 +1600,8 @@ const CustomersPage = ({
                     ) : (
                       <div className="duplicate-review-empty">
                         {reviewTab === 'pending'
-                          ? 'No duplicate candidates are pending review.'
-                          : 'No resolved duplicate candidates yet.'}
+                          ? 'No hay candidatos duplicados pendientes de revisión.'
+                          : 'Todavía no hay candidatos duplicados resueltos.'}
                       </div>
                     )}
                   </section>
@@ -1187,43 +1620,40 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
   return (
     <section className="dashboard-page">
       <div className="page-heading">
-        <div>
-          <span className="eyebrow">Local intelligence</span>
-          <h1>Installed-base overview</h1>
-        </div>
-        <span className="local-chip">On-device data</span>
+        <h1>Resumen del parque instalado</h1>
+        <span className="local-chip">Datos en el dispositivo</span>
       </div>
       {!dashboard ? (
-        <div className="structured-empty">Loading local metrics…</div>
+        <div className="structured-empty">Cargando métricas locales…</div>
       ) : (
         <>
-          <div className="metric-grid">
-            <article>
-              <span>Total customers</span>
+          <div className="stat-ledger">
+            <div className="stat-block">
               <strong>{dashboard.totalCustomers}</strong>
-              <small>synthetic facilities</small>
-            </article>
-            <article>
-              <span>Equipment projected</span>
+              <span>Clientes totales</span>
+              <small>instalaciones sintéticas</small>
+            </div>
+            <div className="stat-block">
               <strong>{dashboard.totalEquipmentObserved}</strong>
-              <small>latest evidence groups</small>
-            </article>
-            <article>
-              <span>Incomplete observations</span>
+              <span>Equipos proyectados</span>
+              <small>últimos grupos de evidencia</small>
+            </div>
+            <div className="stat-block">
               <strong>{dashboard.incompleteObservations}</strong>
-              <small>need enrichment</small>
-            </article>
-            <article>
-              <span>Aging equipment</span>
+              <span>Observaciones incompletas</span>
+              <small>necesitan enriquecimiento</small>
+            </div>
+            <div className="stat-block">
               <strong>—</strong>
-              <small>{dashboard.agingPolicy}</small>
-            </article>
+              <span>Equipos con antigüedad</span>
+              <small>{AGING_POLICY_LABELS[dashboard.agingPolicy]}</small>
+            </div>
           </div>
           <div className="dashboard-grid">
             <article className="chart-card">
               <div className="section-title">
-                <h3>Equipment by modality</h3>
-                <span>Projected quantity</span>
+                <h3>Equipos por modalidad</h3>
+                <span>Cantidad proyectada</span>
               </div>
               <div className="bars">
                 {Object.entries(dashboard.equipmentByModality).map(([label, value]) => (
@@ -1232,31 +1662,31 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
                     <div className="bar-track">
                       <i style={{ width: `${(value / max) * 100}%` }} />
                     </div>
-                    <b>{value}</b>
+                    <b className="numeric">{value}</b>
                   </div>
                 ))}
               </div>
             </article>
             <article className="chart-card">
               <div className="section-title">
-                <h3>Observations by country</h3>
-                <span>Saved sessions</span>
+                <h3>Observaciones por país</h3>
+                <span>Sesiones guardadas</span>
               </div>
               <div className="country-list">
                 {Object.entries(dashboard.observationsByCountry).map(([country, count]) => (
                   <div key={country}>
                     <span>{country}</span>
-                    <b>{count}</b>
+                    <b className="numeric">{count}</b>
                   </div>
                 ))}
               </div>
             </article>
           </div>
           <div className="policy-note">
-            <strong>Freshness is intentionally unclassified.</strong>
+            <strong>La vigencia queda deliberadamente sin clasificar.</strong>
             <span>
-              No business thresholds were supplied, so Fresh/Aging/Stale remains a configurable
-              future rule.
+              No se definieron umbrales de negocio, así que Reciente/Envejeciendo/Obsoleto sigue
+              siendo una regla configurable a futuro.
             </span>
           </div>
         </>
@@ -1281,7 +1711,7 @@ function App(): React.JSX.Element {
     try {
       return await operation();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unexpected error.');
+      setError(caught instanceof Error ? caught.message : 'Error inesperado.');
       return null;
     } finally {
       setBusy(false);
@@ -1323,7 +1753,7 @@ function App(): React.JSX.Element {
         setSelectedCustomer(initialSelection);
       })
       .catch((caught: unknown) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : 'Unexpected error.');
+        if (!cancelled) setError(caught instanceof Error ? caught.message : 'Error inesperado.');
       });
     return () => {
       cancelled = true;
@@ -1357,9 +1787,9 @@ function App(): React.JSX.Element {
 
   const navItems = useMemo(
     () => [
-      { id: 'capture' as const, label: 'Capture', glyph: '✦' },
-      { id: 'customers' as const, label: 'Customer 360', glyph: '◎' },
-      { id: 'dashboard' as const, label: 'Dashboard', glyph: '▥' },
+      { id: 'capture' as const, label: 'Capturar', Icon: IconLedger },
+      { id: 'customers' as const, label: 'Customer 360', Icon: IconFacility },
+      { id: 'dashboard' as const, label: 'Panel', Icon: IconChart },
     ],
     [],
   );
@@ -1368,38 +1798,40 @@ function App(): React.JSX.Element {
     <div className="app-shell">
       <aside className="main-nav">
         <div className="brand">
-          <div className="brand-mark">IB</div>
-          <div>
-            <strong>Installed Base</strong>
-            <span>Intelligence</span>
+          <img src={luaLogo} alt="Lua" className="brand-mark" />
+          <div className="brand-name">
+            <strong>Lua</strong>
+            <span>Inteligencia local</span>
           </div>
         </div>
         <nav>
-          {navItems.map((item) => (
+          {navItems.map(({ id, label, Icon }) => (
             <button
-              key={item.id}
-              className={page === item.id ? 'active' : ''}
+              key={id}
+              className={page === id ? 'active' : ''}
               onClick={() => {
-                setPage(item.id);
-                if (item.id === 'customers' && !selectedCustomer && customers[0])
+                setPage(id);
+                if (id === 'customers' && !selectedCustomer && customers[0])
                   selectCustomer(customers[0].id);
               }}
             >
-              <span>{item.glyph}</span>
-              {item.label}
+              <Icon className="nav-icon" />
+              {label}
             </button>
           ))}
         </nav>
         <div className="nav-footer">
-          <span>Privacy mode</span>
-          <strong>Local only</strong>
+          <span>Modo de privacidad</span>
+          <strong>Solo local</strong>
         </div>
       </aside>
       <main className="workspace">
         {error && (
           <div className="error-banner">
             <span>{error}</span>
-            <button onClick={() => setError(null)}>×</button>
+            <button onClick={() => setError(null)}>
+              <IconClose />
+            </button>
           </div>
         )}
         {page === 'capture' && (

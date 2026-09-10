@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { ZodError, type ZodType } from 'zod';
 import type { CompositionRoot } from '../composition-root';
+import { transcribeVoiceAudio } from '../voice-transcription';
 import {
   CaptureIdRequestSchema,
   CorrectionRequestSchema,
@@ -10,6 +11,7 @@ import {
   IPC_CHANNELS,
   StartCaptureRequestSchema,
   SubmitCaptureRequestSchema,
+  TranscribeVoiceRequestSchema,
   type IpcResult,
 } from '@/shared';
 
@@ -70,4 +72,7 @@ export const registerIpcHandlers = (services: CompositionRoot): void => {
       services.queries.resolveDuplicateCandidate(candidateId, resolution),
   );
   register(IPC_CHANNELS.dashboard, EmptyRequestSchema, () => services.queries.getDashboard());
+  register(IPC_CHANNELS.voiceTranscribe, TranscribeVoiceRequestSchema, ({ audio }) =>
+    transcribeVoiceAudio(services.speechToText, audio),
+  );
 };

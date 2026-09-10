@@ -38,6 +38,55 @@ const parseNumber = (value: string | undefined): number | null => {
   return NUMBER_WORDS[value.toLocaleLowerCase('en')] ?? null;
 };
 
+/** Matches only a number token at the very start of the text, unlike `parseNumber`, which
+ * requires the whole string to be one. Lets a pending-question answer like "3, y tenían
+ * alrededor de 7 años" still yield quantity 3 instead of failing to parse at all. */
+const LEADING_NUMBER = new RegExp(`^(${Object.keys(NUMBER_WORDS).join('|')}|\\d+)\\b`, 'iu');
+
+const leadingNumber = (text: string): number | null => parseNumber(text.match(LEADING_NUMBER)?.[1]);
+
+/**
+ * Age mentioned incidentally in an answer to a *different* pending question, e.g. "3, y tenían
+ * alrededor de 7 años" answering a quantity question. Shares the approximate/exact/qualitative
+ * vocabulary the full-sentence extractor already recognises (`extractEquipment` below), plus
+ * "alrededor de", common spoken-Spanish phrasing for "around" that was otherwise only reachable
+ * through a direct age question.
+ */
+const APPROX_AGE_MENTION =
+  /(?:around|about|approximately|aproximadamente|alrededor\s+de|unos?|unas?)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)(?:\s+years?|\s+a[nñ]os?)?/iu;
+const EXACT_AGE_MENTION = /(?:aged?|de)\s+(\d+)\s*(?:years?|a[nñ]os?)/iu;
+const QUALITATIVE_AGE_MENTION = /\b(newer?|old|recent(?:ly installed)?|nuevo|viejo|reciente)\b/iu;
+
+const mentionedAge = (text: string): ApproximateAge | null => {
+  const approx = text.match(APPROX_AGE_MENTION);
+  const years = approx ? parseNumber(approx[1]) : null;
+  if (years !== null) return { type: 'estimate', minYears: years, maxYears: years };
+  const exact = text.match(EXACT_AGE_MENTION);
+  if (exact?.[1]) return { type: 'exact', years: Number(exact[1]) };
+  const qualitative = text.match(QUALITATIVE_AGE_MENTION);
+  if (qualitative?.[1]) return { type: 'qualitative', label: qualitative[1] };
+  return null;
+};
+
+/**
+ * A manufacturer named with an explicit marker word, as opposed to a bare brand-name answer (a
+ * plain "NovaMed."), which callers fall back to as-is. Stops at the first comma/period so a
+ * trailing clause ("..., modelo NM-300, de unos ocho años") is never swept into the brand name.
+ * Deliberately case-sensitive on the captured name (a real brand is capitalised) so the marker
+ * alternation is spelled out both ways instead of using `/i`, which would also relax that.
+ */
+const MANUFACTURER_MENTION =
+  /\b(?:[Ss]on|[Ee]s|de\s+la\s+marca|manufactured\s+by|[Bb]rand(?:\s+is)?)\s+([\p{Lu}][\p{L}\d]*(?:\s+[\p{Lu}][\p{L}\d]*)*)/u;
+
+const mentionedManufacturer = (text: string): string | null =>
+  text.match(MANUFACTURER_MENTION)?.[1]?.trim() ?? null;
+
+/** A model named after "modelo"/"model", the same marker word used when Model is the pending field. */
+const MODEL_MENTION = /\bmodelo?\s+([\p{L}\d][\p{L}\d-]*)/iu;
+
+const mentionedModel = (text: string): string | null =>
+  text.match(MODEL_MENTION)?.[1]?.trim() ?? null;
+
 const modalityPattern =
   'MR(?:I)?|CT|computed tomography|magnetic resonance|resonadores?|tom[oó]grafos?|ultrasounds?|ultrasonidos?|x-?rays?|rayos x|patient monitors?|patient monitoring';
 
@@ -95,10 +144,13 @@ const pendingAnswer = (text: string, context: ExtractionContext): ObservationExt
     notes: null,
     certainty: 'Explicit' as const,
   };
-  if (question.field === 'Manufacturer') item.manufacturer = correctedManufacturerAnswer(answer);
-  if (question.field === 'Model') item.model = answer;
+  if (question.field === 'Manufacturer') {
+    const corrected = correctedManufacturerAnswer(answer);
+    item.manufacturer = mentionedManufacturer(corrected) ?? corrected;
+  }
+  if (question.field === 'Model') item.model = mentionedModel(answer) ?? answer;
   if (question.field === 'Notes') item.notes = answer;
-  if (question.field === 'Quantity') item.quantity = parseNumber(answer);
+  if (question.field === 'Quantity') item.quantity = leadingNumber(answer) ?? parseNumber(answer);
   if (question.field === 'Modality') {
     item.modality = normalizeModality(answer);
     item.rawModality = answer;
@@ -110,6 +162,22 @@ const pendingAnswer = (text: string, context: ExtractionContext): ObservationExt
     } else {
       item.approximateAge = { type: 'qualitative', label: answer };
     }
+  }
+  // The question above names the one field the observer was asked to answer, but a reply like
+  // "3, y tenían alrededor de 7 años" (quantity pending) or "Son NovaMed, modelo NM-300, de unos
+  // ocho años" (manufacturer pending) volunteers others in the same breath. Pick up anything the
+  // primary field above did not already set, so it is captured now instead of asked about again —
+  // `mergeEquipment` treats each of these independently either way, contradiction handling (P3-S6)
+  // included, so this never overwrites a value silently.
+  if (question.field !== 'ApproximateAge' && item.approximateAge.type === 'unknown') {
+    const age = mentionedAge(answer);
+    if (age) item.approximateAge = age;
+  }
+  if (question.field !== 'Manufacturer' && item.manufacturer === null) {
+    item.manufacturer = mentionedManufacturer(answer);
+  }
+  if (question.field !== 'Model' && item.model === null) {
+    item.model = mentionedModel(answer);
   }
   result.equipment.push(item);
   return result;
@@ -275,10 +343,10 @@ export class DevelopmentMockObservationExtractionService implements ObservationE
   private readonly runtime: InferenceRuntimeInfo = {
     engine: 'Development Mock',
     execution: 'Development only',
-    model: 'Deterministic fixture parser',
+    model: 'Analizador de fixture determinista',
     networkRequiredForInference: false,
     status: 'ready',
-    detail: 'Not valid for the final QVAC demonstration.',
+    detail: 'No válido para la demo final de QVAC.',
     progressPercent: 100,
   };
 
