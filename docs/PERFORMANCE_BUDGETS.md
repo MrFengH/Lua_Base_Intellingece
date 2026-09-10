@@ -134,6 +134,86 @@ targets to check against.
 
 ## Recorded results
 
+### 2026-09-10 — fast model comparison, fixed `extraction-corpus-v1`
+
+The same 30 cases, prompt, schema, evaluator, sampling configuration, context size, and production
+extraction path were used for all three reports. No result was followed by prompt or inference
+optimization. Detailed failures remain in the separate JSON reports:
+
+- `docs/qvac-eval-runs/600m-2026-09-10T12-59-49-257Z.json`
+- `docs/qvac-eval-runs/1.7b-2026-09-10T17-14-15-271Z.json`
+- `docs/qvac-eval-runs/4b-2026-09-10T17-28-37-527Z.json`
+
+The 4B descriptor was verified against the installed `@qvac/sdk` 0.19.0 export and registry as
+`QWEN3_4B_INST_Q4_K_M` (`Qwen3-4B-Q4_K_M.gguf`, 2,497,280,256 bytes, Q4_K_M,
+`llamacpp-completion`). The 4B run used the same machine as the earlier runs, but the command
+resolved system Node 24.19.0 rather than the vendored Node 24.20.0 recorded for the earlier runs;
+this runtime difference is a limitation on the latency comparison. Power state, CPU, RAM, GPU,
+driver, and peak worker RSS were not measurable from the sandbox and remain unconfirmed/TBD.
+
+| Metric                     |            0.6B |              1.7B |                  4B |
+| -------------------------- | --------------: | ----------------: | ------------------: |
+| Field accuracy             | 49.8% (150/301) |   49.1% (140/285) | **63.4% (185/292)** |
+| Full-pass cases            |            0/30 |              0/30 |            **3/30** |
+| Fabricated                 |              46 |                59 |              **42** |
+| Missing                    |              40 |                14 |               **8** |
+| Wrong                      |              45 |                33 |              **29** |
+| Normalization              |               7 |                10 |               **7** |
+| Follow-up                  |          **13** |                29 |                  21 |
+| Extraction errors          |               0 |                 0 |                   0 |
+| EN field accuracy          | 53.9% (118/219) |   53.8% (114/212) | **62.4% (136/218)** |
+| ES field accuracy          |   39.0% (32/82) |     35.6% (26/73) |   **66.2% (49/74)** |
+| Adversarial field accuracy |   52.0% (39/75) | **67.6% (50/74)** |       65.3% (49/75) |
+| `Uncertain` emitted        |              No |                No |                  No |
+| Model load                 |        6,815 ms |         56,157 ms |          162,579 ms |
+| Latency p50                |        2,312 ms |      **2,241 ms** |            3,383 ms |
+| Latency p95                |        6,249 ms |      **2,819 ms** |            6,744 ms |
+| Latency max                |        7,185 ms |      **3,238 ms** |           17,013 ms |
+
+Against 1.7B, 4B improves overall field accuracy by **14.2 percentage points** (rounding the
+displayed percentages gives 14.3 points), produces the only three full-pass cases, and reduces
+fabricated, missing, wrong, normalization, and follow-up failures. This is a material quality
+improvement, especially in Spanish (+30.6 percentage points), although adversarial accuracy falls
+2.2 points and `Uncertain` is still never emitted. It does not meet the stated quality bar: 27 of
+30 cases still fail and 42 fabricated values remain.
+
+The quality gain carries a large cost versus 1.7B: the registry artifact is 2.36 times larger,
+model load is 2.90 times longer, p50 latency is 51% higher, p95 is 139% higher, and max latency is
+425% higher. Numeric performance targets are still TBD, so budget status remains **TBD**. Because
+the 4B quality improvement over 1.7B is material, the conditional instruction to close model
+exploration does not apply; this comparison does not change the production default from 0.6B.
+
+### 2026-09-10 — P4-S4/P4-S5, initial 1.7B attempt (historical; superseded above)
+
+Environment: same machine as the P4-S3 baseline below; Node 24.20.0 via the vendored
+`.tools/node-v24.20.0-win-x64`; mains power assumed (not confirmed).
+
+`npm run corpus:eval` was re-run against `QWEN3_600M_INST_Q4` with the runner instrumented for
+latency. Result: **0 / 30 cases passed, 49.8% field accuracy (150 / 301 fields)** — different from
+the 43.8% P4-S3 baseline below, which is expected run-to-run variance from QVAC's non-deterministic
+sampling on the same model, input and prompt (see `docs/TESTING.md`: "A green `npm test` is not
+evidence that QVAC works" applies equally to any single non-deterministic run). Full detail in
+`docs/qvac-eval-runs/600m-2026-09-10T12-59-49-257Z.json`.
+
+| Metric                           | Value                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model load time                  | 6,815 ms                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Per-case latency, p50            | 2,312 ms                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Per-case latency, p95            | 6,249 ms                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Per-case latency, max            | 7,185 ms                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Total evaluation time (30 cases) | 82,449 ms                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Model file size                  | 382,156,480 B ≈ 365 MiB                                                                                                                                                                                                                                                                                                                                                                                     |
+| Peak RSS during inference        | **Not measured** — `@qvac/sdk` runs inference in a separate IPC-connected worker process (`dist/src/worker/lifecycle.js`), so this script's own process memory does not reflect it. Measuring it reliably needs the SDK's `getSystemResources()`/`profiler` surface, already flagged in this document as proposed but not integrated — not built here per the instruction not to invent memory measurements |
+
+At the time of this initial attempt, the **1.7B (`QWEN3_1_7B_INST_Q4`) comparison was blocked and
+not completed.** The model was not yet cached
+locally; the registry download stalled at 0 bytes for 15+ minutes with near-zero worker CPU usage,
+consistent with the SDK's peer-to-peer registry transport failing to find peers for this blob in
+this network environment (detail and options in
+[MODEL_STRATEGY.md](MODEL_STRATEGY.md#2026-09-10-escalation-attempt-p4-s4p4-s5--17b-comparison-blocked-on-provisioning)).
+No 1.7B numbers existed at that point. This historical blocker was subsequently resolved; the
+completed 1.7B and 4B results are in the comparison section above.
+
 ### 2026-09-10 — P4-S3 extraction accuracy baseline, `extraction-corpus-v1`
 
 `npm run corpus:eval` against `QWEN3_600M_INST_Q4` (the default completion model), 30 corpus

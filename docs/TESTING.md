@@ -44,18 +44,25 @@ cheaper and more reliable than a prompt instruction.
 
 The seam between the application and QVAC.
 
-Test through `ObservationExtractionPort` with a double. What matters is behaviour the adapter
-must guarantee regardless of model output:
+**Built** (P4-S4) — `tests/infrastructure/qvac-observation-extraction.test.ts`, mocking `@qvac/sdk`
+at the module boundary so no real model or hardware is needed in `npm test`. Covers:
 
 - initialization is explicit and idempotent; a second `initialize()` does not reload;
+- model selection: the default registry model, a configured alternate `modelDescriptor` (used for
+  the 0.6B vs 1.7B vs 4B comparison — see `MODEL_STRATEGY.md`), and a local `modelPath` override each
+  load through the correct `loadModel` call;
 - a load failure surfaces as an error and leaves the runtime in `error`, not `ready`;
-- an inference failure does not produce a partial or default record;
-- **no fallback to the mock ever occurs** when the engine is QVAC;
-- `dispose()` unloads and the reported status returns to `model-not-loaded`;
+- an inference failure — truncated/malformed JSON, or JSON that fails schema validation — does not
+  produce a partial or default record; it rejects;
+- a well-formed extraction with `Unknown`/`null` fields passes through unchanged;
+- `dispose()` unloads and the reported status returns to `model-not-loaded`.
+
+**No fallback to the mock ever occurs** when the engine is QVAC — there is no code path for it in
+`QvacObservationExtractionService`, so this is verified by inspection rather than a dedicated test.
 
 Malformed payload rejection at the contract boundary is covered directly by
-`tests/application/extraction-schema.test.ts`. An adapter integration test must still prove that
-the resulting validation failure is surfaced rather than silently repaired.
+`tests/application/extraction-schema.test.ts`. The adapter integration tests above prove that the
+resulting validation failure is surfaced rather than silently repaired.
 
 ## Structured extraction tests
 

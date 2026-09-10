@@ -1,0 +1,1281 @@
+{
+  "corpusVersion": "extraction-corpus-v1",
+  "generatedAt": "2026-09-10T17:28:37.527Z",
+  "model": "QWEN3_4B_INST_Q4_K_M",
+  "modelExpectedSizeBytes": 2497280256,
+  "modelPath": null,
+  "modelName": null,
+  "performance": {
+    "modelLoadTimeMs": 162579.4766,
+    "totalEvaluationTimeMs": 116496.59829999998,
+    "perCaseLatencyMs": {
+      "p50": 3382.940399999963,
+      "p95": 6744.2549,
+      "max": 17012.91590000002
+    },
+    "peakMemory": "not measured — see console note; QVAC worker runs in a separate process"
+  },
+  "metrics": {
+    "overall": {
+      "totalCases": 30,
+      "passedCases": 3,
+      "failedCases": 27,
+      "extractionErrors": 0,
+      "totalFields": 292,
+      "passedFields": 185,
+      "fieldAccuracy": 0.6335616438356164,
+      "fabricatedValues": 42,
+      "missingExpectedValues": 8,
+      "wrongValues": 29,
+      "normalizationFailures": 7,
+      "followUpFailures": 21
+    },
+    "bySource": {
+      "official-workbook": {
+        "totalCases": 13,
+        "passedCases": 0,
+        "failedCases": 13,
+        "extractionErrors": 0,
+        "totalFields": 134,
+        "passedFields": 76,
+        "fieldAccuracy": 0.5671641791044776,
+        "fabricatedValues": 24,
+        "missingExpectedValues": 2,
+        "wrongValues": 14,
+        "normalizationFailures": 3,
+        "followUpFailures": 15
+      },
+      "challenge-brief": {
+        "totalCases": 4,
+        "passedCases": 1,
+        "failedCases": 3,
+        "extractionErrors": 0,
+        "totalFields": 70,
+        "passedFields": 46,
+        "fieldAccuracy": 0.6571428571428571,
+        "fabricatedValues": 9,
+        "missingExpectedValues": 3,
+        "wrongValues": 8,
+        "normalizationFailures": 2,
+        "followUpFailures": 2
+      },
+      "project-authored": {
+        "totalCases": 13,
+        "passedCases": 2,
+        "failedCases": 11,
+        "extractionErrors": 0,
+        "totalFields": 88,
+        "passedFields": 63,
+        "fieldAccuracy": 0.7159090909090909,
+        "fabricatedValues": 9,
+        "missingExpectedValues": 3,
+        "wrongValues": 7,
+        "normalizationFailures": 2,
+        "followUpFailures": 4
+      }
+    },
+    "byLanguage": {
+      "en": {
+        "totalCases": 18,
+        "passedCases": 2,
+        "failedCases": 16,
+        "extractionErrors": 0,
+        "totalFields": 218,
+        "passedFields": 136,
+        "fieldAccuracy": 0.6238532110091743,
+        "fabricatedValues": 33,
+        "missingExpectedValues": 5,
+        "wrongValues": 22,
+        "normalizationFailures": 5,
+        "followUpFailures": 17
+      },
+      "es": {
+        "totalCases": 12,
+        "passedCases": 1,
+        "failedCases": 11,
+        "extractionErrors": 0,
+        "totalFields": 74,
+        "passedFields": 49,
+        "fieldAccuracy": 0.6621621621621622,
+        "fabricatedValues": 9,
+        "missingExpectedValues": 3,
+        "wrongValues": 7,
+        "normalizationFailures": 2,
+        "followUpFailures": 4
+      }
+    },
+    "adversarial": {
+      "totalCases": 8,
+      "passedCases": 0,
+      "failedCases": 8,
+      "extractionErrors": 0,
+      "totalFields": 75,
+      "passedFields": 49,
+      "fieldAccuracy": 0.6533333333333333,
+      "fabricatedValues": 8,
+      "missingExpectedValues": 0,
+      "wrongValues": 8,
+      "normalizationFailures": 3,
+      "followUpFailures": 7
+    }
+  },
+  "uncertaintyObserved": false,
+  "failures": [
+    {
+      "id": "voice-prompt-01",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #1"
+      },
+      "language": "en",
+      "input": "I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.country",
+          "reason": "wrong-value",
+          "expected": "Panama",
+          "actual": "Unknown",
+          "detail": "customer.country: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[1].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": "Manufacturer",
+          "actual": null,
+          "detail": "expected a follow-up on Manufacturer but none was raised"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-02",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #2"
+      },
+      "language": "en",
+      "input": "At Hospital DemoCare Horizon I saw three MR systems. Two seem old and one looks much newer.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": "Manufacturer",
+          "actual": null,
+          "detail": "expected a follow-up on Manufacturer but none was raised"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-03",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #3"
+      },
+      "language": "en",
+      "input": "Clinica DemoCare Light has two CT scanners, both Orion Imaging, around eleven years old.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 2,
+          "detail": "expected 1 equipment group(s) but got 2"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:Model",
+          "reason": "wrong-follow-up",
+          "expected": "Model",
+          "actual": null,
+          "detail": "expected a follow-up on Model but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-04",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #4"
+      },
+      "language": "en",
+      "input": "Centro Medico DemoCare Valley has one MR and two CTs. I do not know the brands.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Manufacturer",
+          "detail": "Manufacturer is declared unknown and must never be asked again"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Manufacturer",
+          "detail": "Manufacturer is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-05",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #5"
+      },
+      "language": "en",
+      "input": "Hospital DemoCare North has about six ultrasound units, mostly new.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "wrong-normalization",
+          "expected": {
+            "type": "qualitative",
+            "label": "mostly new"
+          },
+          "actual": {
+            "type": "estimate",
+            "minYears": 3,
+            "maxYears": 9
+          },
+          "detail": "equipment[0].approximateAge: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": "Manufacturer",
+          "actual": null,
+          "detail": "expected a follow-up on Manufacturer but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-06",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #6"
+      },
+      "language": "en",
+      "input": "Clinica DemoCare Andes has one very old CT and two MR systems from the same manufacturer.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "wrong-normalization",
+          "expected": {
+            "type": "qualitative",
+            "label": "very old"
+          },
+          "actual": {
+            "type": "estimate",
+            "minYears": 8,
+            "maxYears": 8
+          },
+          "detail": "equipment[0].approximateAge: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "same manufacturer",
+          "detail": "equipment[1].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 9,
+            "maxYears": 9
+          },
+          "detail": "equipment[1].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-07",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #7"
+      },
+      "language": "en",
+      "input": "Hospital DemoCare Park has one MR, maybe ten years old, plus three CT scanners.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[1].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": "Manufacturer",
+          "actual": null,
+          "detail": "expected a follow-up on Manufacturer but none was raised"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-08",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #8"
+      },
+      "language": "en",
+      "input": "Clinica DemoCare Central has many ultrasound systems, maybe eight, all Aurelia Health.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-09",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #9"
+      },
+      "language": "en",
+      "input": "Instituto DemoCare Lima has two old CTs and one recently installed MR.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 2,
+          "actual": 3,
+          "detail": "expected 2 equipment group(s) but got 3"
+        },
+        {
+          "scope": "equipment[1].modality",
+          "reason": "wrong-normalization",
+          "expected": "MR",
+          "actual": "CT",
+          "detail": "equipment[1].modality: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "voice-prompt-10",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Voice Test Prompts sheet, Test #10"
+      },
+      "language": "en",
+      "input": "Hospital DemoCare Metro North has two MR systems. I know the brand is Aurelia Health but not the model.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        },
+        {
+          "scope": "follow-up:Model",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Model",
+          "detail": "Model is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "installed-base-row-07",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Dummy Installed Base sheet, row 7 (Observation ID 6)"
+      },
+      "language": "en",
+      "input": "They also have about five ultrasound systems. I think four are HelixCare; one is unknown.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 5,
+          "detail": "expected 1 equipment group(s) but got 5"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "installed-base-row-13",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Dummy Installed Base sheet, row 13 (Observation ID 12)"
+      },
+      "language": "en",
+      "input": "Hospital DemoCare Park has one MR that looks around ten years old. HelixCare, model unknown.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.name",
+          "reason": "missing-expected-value",
+          "expected": "Hospital DemoCare Park",
+          "actual": null,
+          "detail": "customer.name: expected a known value but none was produced"
+        },
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 2,
+          "detail": "expected 1 equipment group(s) but got 2"
+        },
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "missing-expected-value",
+          "expected": "HelixCare",
+          "actual": null,
+          "detail": "equipment[0].manufacturer: expected a known value but none was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:Model",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Model",
+          "detail": "Model is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "installed-base-row-15",
+      "origin": {
+        "source": "official-workbook",
+        "locator": "Dummy Installed Base sheet, row 15 (Observation ID 14)"
+      },
+      "language": "en",
+      "input": "Clinica DemoCare Central has many ultrasound systems, maybe eight. Aurelia Health. Eight is my best estimate.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.name",
+          "reason": "wrong-value",
+          "expected": "Clinica DemoCare Central",
+          "actual": "Aurelia Health",
+          "detail": "customer.name: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "wrong-value",
+          "expected": "Aurelia Health",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 3,
+            "maxYears": 9
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "challenge-brief-01",
+      "origin": {
+        "source": "challenge-brief",
+        "locator": "Challenge brief docx, \"Your Mission\" example (Hospital Alpha)"
+      },
+      "language": "en",
+      "input": "I visited Hospital Alpha today. They have three MR systems, two CT systems and four ultrasound systems. Two of the MR systems appear to be around 8–10 years old.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.city",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "customer.city: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "customer.country",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "customer.country: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 4,
+          "actual": 3,
+          "detail": "expected 4 equipment group(s) but got 3"
+        },
+        {
+          "scope": "equipment[0].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].modality",
+          "reason": "wrong-normalization",
+          "expected": "MR",
+          "actual": "CT",
+          "detail": "equipment[1].modality: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].quantity",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 2,
+          "detail": "equipment[1].quantity: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[1].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[2].modality",
+          "reason": "wrong-normalization",
+          "expected": "CT",
+          "actual": "Ultrasound",
+          "detail": "equipment[2].modality: did not match the expected value"
+        },
+        {
+          "scope": "equipment[2].quantity",
+          "reason": "wrong-value",
+          "expected": 2,
+          "actual": 4,
+          "detail": "equipment[2].quantity: did not match the expected value"
+        },
+        {
+          "scope": "equipment[2].manufacturer",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[2].manufacturer: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[2].model",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[2].model: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[3].*",
+          "reason": "missing-expected-value",
+          "expected": null,
+          "actual": null,
+          "detail": "expected equipment group 3 was not produced"
+        },
+        {
+          "scope": "follow-up:Location",
+          "reason": "wrong-follow-up",
+          "expected": "Location",
+          "actual": null,
+          "detail": "expected a follow-up on Location but none was raised"
+        },
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": "Manufacturer",
+          "actual": null,
+          "detail": "expected a follow-up on Manufacturer but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "challenge-brief-02",
+      "origin": {
+        "source": "challenge-brief",
+        "locator": "Challenge brief docx, \"Conversational Data Capture\" example (São Paulo)"
+      },
+      "language": "en",
+      "input": "I'm at Hospital Alpha in São Paulo. I saw two CT systems and three MR systems. One of the MR systems looks relatively new.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.country",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Brazil",
+          "detail": "customer.country: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 3,
+          "actual": 2,
+          "detail": "expected 3 equipment group(s) but got 2"
+        },
+        {
+          "scope": "equipment[1].quantity",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 3,
+          "detail": "equipment[1].quantity: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].approximateAge",
+          "reason": "missing-expected-value",
+          "expected": {
+            "type": "qualitative",
+            "label": "relatively new"
+          },
+          "actual": null,
+          "detail": "equipment[1].approximateAge: expected a known value but none was produced"
+        },
+        {
+          "scope": "equipment[2].*",
+          "reason": "missing-expected-value",
+          "expected": null,
+          "actual": null,
+          "detail": "expected equipment group 2 was not produced"
+        }
+      ]
+    },
+    {
+      "id": "challenge-brief-04",
+      "origin": {
+        "source": "challenge-brief",
+        "locator": "Challenge brief docx, \"Intelligent Validation\" follow-up dialogue"
+      },
+      "language": "en",
+      "input": "They have two CTs. I know one is approximately six years old, but I don't know the model.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].quantity",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 2,
+          "detail": "equipment[0].quantity: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-01",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, \"Project-authored reference cases\" block, case 1"
+      },
+      "language": "es",
+      "input": "Había dos equipos NovaMed, creo que ambos eran resonadores.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 8,
+            "maxYears": 8
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:ApproximateAge",
+          "reason": "wrong-follow-up",
+          "expected": "ApproximateAge",
+          "actual": null,
+          "detail": "expected a follow-up on ApproximateAge but none was raised"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-02",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, \"Project-authored reference cases\" block, case 2"
+      },
+      "language": "es",
+      "input": "El equipo de Orion Imaging parecía viejo, quizá diez años, pero no pude ver el modelo.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "follow-up:Model",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Model",
+          "detail": "Model is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-03",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, \"Project-authored reference cases\" block, case 3, and Required cases table row \"Speaker self-corrects\""
+      },
+      "language": "es",
+      "input": "Primero pensé que eran tres, pero en realidad había dos.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment.length",
+          "reason": "wrong-value",
+          "expected": 1,
+          "actual": 2,
+          "detail": "expected 1 equipment group(s) but got 2"
+        },
+        {
+          "scope": "equipment[0].modality",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "MR",
+          "detail": "equipment[0].modality: must remain absent (MustNotInfer) but a value was produced"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-04",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Unknown manufacturer\""
+      },
+      "language": "es",
+      "input": "un tomógrafo, no vi la marca",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "follow-up:Manufacturer",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Manufacturer",
+          "detail": "Manufacturer is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-05",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Unknown model\""
+      },
+      "language": "es",
+      "input": "un equipo de Orion Imaging, no pude ver el modelo",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].quantity",
+          "reason": "missing-expected-value",
+          "expected": 1,
+          "actual": null,
+          "detail": "equipment[0].quantity: expected a known value but none was produced"
+        },
+        {
+          "scope": "follow-up:Model",
+          "reason": "wrong-follow-up",
+          "expected": null,
+          "actual": "Model",
+          "detail": "Model is declared unknown and must never be asked again"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-06",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Several devices in one sentence\""
+      },
+      "language": "es",
+      "input": "dos resonadores NovaMed y un tomógrafo Orion Imaging",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].approximateAge",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[1].approximateAge: must remain absent (MustNotInfer) but a value was produced"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-07",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Differing ages, same modality\""
+      },
+      "language": "es",
+      "input": "dos tienen unos nueve años y uno unos tres",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].modality",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "MR",
+          "detail": "equipment[0].modality: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "wrong-value",
+          "expected": {
+            "type": "estimate",
+            "minYears": 9,
+            "maxYears": 9
+          },
+          "actual": {
+            "type": "estimate",
+            "minYears": 8,
+            "maxYears": 8
+          },
+          "detail": "equipment[0].approximateAge: did not match the expected value"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        },
+        {
+          "scope": "equipment[1].modality",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "CT",
+          "detail": "equipment[1].modality: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[1].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[1].certainty: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-09",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Approximate age\""
+      },
+      "language": "es",
+      "input": "quizá unos ocho años",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].modality",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "MR",
+          "detail": "equipment[0].modality: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].quantity",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": 1,
+          "detail": "equipment[0].quantity: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].certainty",
+          "reason": "wrong-value",
+          "expected": "Uncertain",
+          "actual": "Unknown",
+          "detail": "equipment[0].certainty: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-10",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Qualitative age\""
+      },
+      "language": "es",
+      "input": "parece bastante nuevo",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].modality",
+          "reason": "fabricated-value",
+          "expected": "MustNotInfer",
+          "actual": "Unknown",
+          "detail": "equipment[0].modality: must remain absent (MustNotInfer) but a value was produced"
+        },
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "wrong-normalization",
+          "expected": {
+            "type": "qualitative",
+            "label": "bastante nuevo"
+          },
+          "actual": {
+            "type": "estimate",
+            "minYears": 0,
+            "maxYears": 0
+          },
+          "detail": "equipment[0].approximateAge: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-11",
+      "origin": {
+        "source": "project-authored",
+        "locator": "TESTING.md, Required cases table, row \"Colloquial phrasing\""
+      },
+      "language": "es",
+      "input": "tenían un par de máquinas de resonancia bastante viejas",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "equipment[0].approximateAge",
+          "reason": "wrong-normalization",
+          "expected": {
+            "type": "qualitative",
+            "label": "bastante viejas"
+          },
+          "actual": {
+            "type": "estimate",
+            "minYears": 8,
+            "maxYears": 10
+          },
+          "detail": "equipment[0].approximateAge: did not match the expected value"
+        }
+      ]
+    },
+    {
+      "id": "project-authored-12",
+      "origin": {
+        "source": "project-authored",
+        "locator": "README.md, \"Duplicate detection\" corroboration run, step 1 (Spanish)"
+      },
+      "language": "es",
+      "input": "Estoy en el Hospital DemoCare Pacific, en Panama. Tienen dos resonadores.",
+      "extractionError": null,
+      "failingFields": [
+        {
+          "scope": "customer.name",
+          "reason": "missing-expected-value",
+          "expected": "Hospital DemoCare Pacific",
+          "actual": null,
+          "detail": "customer.name: expected a known value but none was produced"
+        },
+        {
+          "scope": "customer.country",
+          "reason": "missing-expected-value",
+          "expected": "Panama",
+          "actual": null,
+          "detail": "customer.country: expected a known value but none was produced"
+        }
+      ]
+    }
+  ]
+}

@@ -78,6 +78,60 @@ recorded rather than acted on:
 decision for a person, to be recorded in `DECISIONS.md` if taken. No model, quantization or prompt
 change was made to produce or in response to this number.
 
+### 2026-09-10 initial escalation attempt — historical blocker, subsequently resolved
+
+`QvacObservationExtractionService` gained an optional `modelDescriptor` config field so a caller
+can select `QWEN3_1_7B_INST_Q4` (a real, `@qvac/sdk`-exported registry descriptor, verified against
+the installed SDK, `expectedSize: 1,056,782,912`) instead of the default, through the same
+`loadModel` "load from descriptor" overload the default already uses. `scripts/qvac-corpus-eval.ts`
+exposes this as `CIB_QVAC_CORPUS_MODEL=1.7b`. No new runtime, prompt, or contract was introduced;
+inference still goes through `@qvac/sdk` exclusively.
+
+**This initial comparison run did not complete.** `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval`
+triggered the registry download (the model was not yet cached locally), and that download stalled:
+`~/.qvac/models/f7cce66406dee646_Qwen3-1.7B-Q4_0.gguf` sat at 0 bytes for 15+ minutes with the QVAC
+worker processes at near-zero CPU (0.05–0.85s of CPU time total), unlike the earlier successful
+0.6B download. `QWEN3_1_7B_INST_Q4`'s `src` resolves through the SDK's Hyperdrive/Corestore-based
+peer-to-peer registry transport (`~/.qvac/registry-corestore/`); the stall is consistent with that
+P2P transport failing to find peers for this blob in the current network environment, not with a
+code defect — the 0.6B model, fetched over the same registry mechanism on a different occasion,
+downloaded to its full 382,156,480 bytes without issue. The stalled processes were terminated
+rather than left running indefinitely.
+
+**No 1.7B measurement existed from this attempt.** This is retained as historical provenance for
+the acquisition failure. It was later resolved, as recorded in the fast-comparison section below;
+the options considered at the time were:
+
+1. Retry `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval` on a machine/network without the
+   restriction that appears to be blocking the P2P registry transport.
+2. Obtain the `Qwen3-1.7B-Q4_0.gguf` file through another channel and point
+   `CIB_QVAC_MODEL_PATH` (which the runner already honors and takes priority over
+   `CIB_QVAC_CORPUS_MODEL`) at the local file.
+3. Accept the measured 0.6B baseline for the demo given the timeline, and revisit escalation later.
+
+### 2026-09-10 fast comparison resolved — 4B materially improves quality, no production switch
+
+The previously blocked 1.7B acquisition later completed, and one additional model was evaluated:
+the installed SDK 0.19.0 export `QWEN3_4B_INST_Q4_K_M`. Its registry descriptor names
+`Qwen3-4B-Q4_K_M.gguf`, Q4_K_M, 2,497,280,256 bytes, and the existing
+`llamacpp-completion` engine. No other model was tried.
+
+| Candidate              | Corpus field accuracy | Full-pass |   Registry size | Peak RAM | Language result    |   Latency p50 / p95 / max |
+| ---------------------- | --------------------: | --------: | --------------: | -------- | ------------------ | ------------------------: |
+| `QWEN3_600M_INST_Q4`   |                 49.8% |      0/30 |   382,156,480 B | TBD      | EN 53.9%; ES 39.0% |  2,312 / 6,249 / 7,185 ms |
+| `QWEN3_1_7B_INST_Q4`   |                 49.1% |      0/30 | 1,056,782,912 B | TBD      | EN 53.8%; ES 35.6% |  2,241 / 2,819 / 3,238 ms |
+| `QWEN3_4B_INST_Q4_K_M` |             **63.4%** |  **3/30** | 2,497,280,256 B | TBD      | EN 62.4%; ES 66.2% | 3,383 / 6,744 / 17,013 ms |
+
+The acceptance criterion remains the documented extraction cases passing while uncertainty and
+unknowns are preserved. None of the candidates meets it. The 4B result is nevertheless materially
+better than 1.7B (+14.2 percentage points overall and three full-pass cases), so the conditional
+instruction to close exploration does not apply. This comparison alone does **not** justify a
+production switch: the 4B model still fails 27/30 cases, fabricates 42 values, never emits
+`Uncertain`, and has materially higher load and latency costs. The production default therefore
+remains `QWEN3_600M_INST_Q4`; fallback and lifecycle are unchanged. Full metrics and per-case
+failures are recorded in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) and the three separate
+JSON reports under `docs/qvac-eval-runs/`.
+
 ## Capability 2 — Speech to text (PLANNED, not implemented)
 
 Voice is the natural capture mode for someone walking a hospital corridor. `SpeechToTextPort`

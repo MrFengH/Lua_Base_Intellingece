@@ -23,7 +23,13 @@ import type {
 } from '@/domain';
 import { declaredUnknownField, FollowUpQuestionService, knownField, missingField } from '@/domain';
 import type { ObservationExtraction } from '@/application';
-import { QvacObservationExtractionService, type QvacLifecycleEvent } from '@/infrastructure';
+import {
+  QvacObservationExtractionService,
+  QWEN3_1_7B_INST_Q4,
+  QWEN3_600M_INST_Q4,
+  type QvacLifecycleEvent,
+  type QvacModelDescriptor,
+} from '@/infrastructure';
 import {
   EXTRACTION_CORPUS,
   EXTRACTION_CORPUS_VERSION,
@@ -36,6 +42,7 @@ import {
   type CorpusLanguage,
   type FieldEvaluation,
 } from '../tests/fixtures/corpus';
+import { QWEN3_4B_INST_Q4_K_M } from '../src/infrastructure/qvac/qvac-corpus-eval-model';
 
 /**
  * The eight official anti-fabrication cases named in docs/ROADMAP.md, P4-S2. Not a corpus
@@ -179,12 +186,15 @@ interface CaseRunResult {
   readonly extraction: ObservationExtraction | null;
   readonly followUps: readonly ActualFollowUp[];
   readonly extractionError: string | null;
+  /** Wall-clock time of the single `extractor.extract()` call, in ms. Excludes follow-up probing. */
+  readonly latencyMs: number;
 }
 
 async function runCase(
   extractor: QvacObservationExtractionService,
   corpusCase: CorpusCase,
 ): Promise<CaseRunResult> {
+  const startedAt = performance.now();
   try {
     const extraction = await extractor.extract(corpusCase.inputText, {
       captureDraft: null,
@@ -192,10 +202,12 @@ async function runCase(
       conversation: [],
       knownCustomers: [],
     });
+    const latencyMs = performance.now() - startedAt;
     const followUps = collectFollowUps(toFreshDraft(extraction));
     const evaluation = evaluateCase(corpusCase, { extraction, followUps });
-    return { corpusCase, evaluation, extraction, followUps, extractionError: null };
+    return { corpusCase, evaluation, extraction, followUps, extractionError: null, latencyMs };
   } catch (error) {
+    const latencyMs = performance.now() - startedAt;
     const message = error instanceof Error ? error.message : String(error);
     return {
       corpusCase,
@@ -213,8 +225,22 @@ async function runCase(
       extraction: null,
       followUps: [],
       extractionError: message,
+      latencyMs,
     };
   }
+}
+
+/** p50/p95/max over a set of millisecond samples. `null` when there is nothing to summarize. */
+function latencyStats(samplesMs: readonly number[]): {
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+} {
+  if (samplesMs.length === 0) return { p50: null, p95: null, max: null };
+  const sorted = [...samplesMs].sort((a, b) => a - b);
+  const at = (fraction: number): number =>
+    sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))]!;
+  return { p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1]! };
 }
 
 interface Metrics {
@@ -273,6 +299,31 @@ function printMetrics(label: string, metrics: Metrics): void {
   );
 }
 
+/**
+ * Model constants recognised via `CIB_QVAC_CORPUS_MODEL`. Deliberately only these three, real
+ * `@qvac/sdk` registry descriptors — no invented model names — so this script can score either
+ * without a code change, for the 0.6B vs 1.7B vs 4B comparison. Defaults to `600m`, matching the
+ * application's own default.
+ */
+const MODEL_CHOICES = {
+  '600m': QWEN3_600M_INST_Q4,
+  '1.7b': QWEN3_1_7B_INST_Q4,
+  '4b': QWEN3_4B_INST_Q4_K_M,
+} satisfies Record<string, QvacModelDescriptor | typeof QWEN3_4B_INST_Q4_K_M>;
+
+function resolveModelChoice(): {
+  key: keyof typeof MODEL_CHOICES;
+  descriptor: QvacModelDescriptor | typeof QWEN3_4B_INST_Q4_K_M;
+} {
+  const key = (process.env.CIB_QVAC_CORPUS_MODEL ?? '600m').toLowerCase();
+  if (key !== '600m' && key !== '1.7b' && key !== '4b') {
+    throw new Error(
+      `Unrecognised CIB_QVAC_CORPUS_MODEL "${key}". Use "600m", "1.7b" or "4b" (or unset for the default).`,
+    );
+  }
+  return { key, descriptor: MODEL_CHOICES[key] };
+}
+
 async function main(): Promise<void> {
   const structuralProblems = validateCorpus(EXTRACTION_CORPUS);
   if (structuralProblems.length > 0) {
@@ -282,6 +333,21 @@ async function main(): Promise<void> {
     return;
   }
 
+  const { key: modelChoice, descriptor: modelDescriptor } = resolveModelChoice();
+  const usingLocalPath = Boolean(process.env.CIB_QVAC_MODEL_PATH);
+  const benchmarkRegistrySource = modelChoice === '4b' ? modelDescriptor.src : undefined;
+  const productionModelDescriptor: QvacModelDescriptor | undefined =
+    modelChoice === '600m'
+      ? QWEN3_600M_INST_Q4
+      : modelChoice === '1.7b'
+        ? QWEN3_1_7B_INST_Q4
+        : undefined;
+  console.log(
+    usingLocalPath
+      ? `Model: local path override (${process.env.CIB_QVAC_MODEL_PATH})`
+      : `Model: ${modelDescriptor.name} (${(modelDescriptor.expectedSize / 1_048_576).toFixed(1)} MiB)`,
+  );
+
   const lifecycleMessages: Readonly<Record<QvacLifecycleEvent, string>> = {
     'runtime-initialized': 'PASS: QVAC runtime initialized',
     'model-loaded': 'PASS: model loaded',
@@ -289,8 +355,10 @@ async function main(): Promise<void> {
     'structured-output-validated': 'structured output validated',
   };
   const extractor = new QvacObservationExtractionService({
-    modelPath: process.env.CIB_QVAC_MODEL_PATH,
-    modelName: process.env.CIB_QVAC_MODEL_NAME,
+    modelPath: process.env.CIB_QVAC_MODEL_PATH ?? benchmarkRegistrySource,
+    modelDescriptor: productionModelDescriptor,
+    modelName:
+      process.env.CIB_QVAC_MODEL_NAME ?? (modelChoice === '4b' ? modelDescriptor.name : undefined),
     onLifecycleEvent: (event) => {
       if (event === 'runtime-initialized' || event === 'model-loaded') {
         console.log(lifecycleMessages[event]);
@@ -298,22 +366,28 @@ async function main(): Promise<void> {
     },
   });
 
+  const loadStartedAt = performance.now();
   await extractor.initialize();
+  const modelLoadTimeMs = performance.now() - loadStartedAt;
+  console.log(`Model load time: ${modelLoadTimeMs.toFixed(0)} ms`);
   console.log(`Scoring ${EXTRACTION_CORPUS.length} cases against the real QVAC adapter...`);
 
+  const evaluationStartedAt = performance.now();
   const results: CaseRunResult[] = [];
   try {
     for (const corpusCase of EXTRACTION_CORPUS) {
       const result = await runCase(extractor, corpusCase);
       results.push(result);
       console.log(
-        `  ${result.evaluation.passed ? 'PASS' : 'FAIL'} ${corpusCase.id} (${corpusCase.origin.source}, ${corpusCase.language})` +
+        `  ${result.evaluation.passed ? 'PASS' : 'FAIL'} ${corpusCase.id} (${corpusCase.origin.source}, ${corpusCase.language}, ${result.latencyMs.toFixed(0)} ms)` +
           (result.extractionError ? ` — extraction error: ${result.extractionError}` : ''),
       );
     }
   } finally {
     await extractor.dispose();
   }
+  const totalEvaluationTimeMs = performance.now() - evaluationStartedAt;
+  const latency = latencyStats(results.map((result) => result.latencyMs));
 
   const overall = summarize(results);
   const bySource = Object.fromEntries(
@@ -344,6 +418,16 @@ async function main(): Promise<void> {
   console.log(
     `Certainty 'Uncertain' ever emitted by the real model: ${uncertaintyObserved ? 'yes' : 'NO — see E-11 finding'}`,
   );
+  console.log(
+    `Latency (ms): p50=${latency.p50?.toFixed(0)} p95=${latency.p95?.toFixed(0)} max=${latency.max?.toFixed(0)}, ` +
+      `model load=${modelLoadTimeMs.toFixed(0)}, total evaluation=${totalEvaluationTimeMs.toFixed(0)}`,
+  );
+  console.log(
+    'Peak memory: not measured — @qvac/sdk runs inference in a separate IPC-connected worker ' +
+      "process (see dist/src/worker/lifecycle.js), so this script's own process.memoryUsage() " +
+      "would not reflect it. Measuring it reliably needs the SDK's getSystemResources()/profiler " +
+      'surface, which PERFORMANCE_BUDGETS.md already flags as proposed but not integrated.',
+  );
 
   const failures = results
     .filter((result) => !result.evaluation.passed)
@@ -367,8 +451,16 @@ async function main(): Promise<void> {
   const report = {
     corpusVersion: EXTRACTION_CORPUS_VERSION,
     generatedAt: new Date().toISOString(),
+    model: usingLocalPath ? null : modelDescriptor.name,
+    modelExpectedSizeBytes: usingLocalPath ? null : modelDescriptor.expectedSize,
     modelPath: process.env.CIB_QVAC_MODEL_PATH ?? null,
     modelName: process.env.CIB_QVAC_MODEL_NAME ?? null,
+    performance: {
+      modelLoadTimeMs,
+      totalEvaluationTimeMs,
+      perCaseLatencyMs: latency,
+      peakMemory: 'not measured — see console note; QVAC worker runs in a separate process',
+    },
     metrics: { overall, bySource, byLanguage, adversarial },
     uncertaintyObserved,
     failures,
@@ -377,7 +469,7 @@ async function main(): Promise<void> {
   const outPath = join(
     'docs',
     'qvac-eval-runs',
-    `${report.generatedAt.replace(/[:.]/g, '-')}.json`,
+    `${usingLocalPath ? 'local-path' : modelChoice}-${report.generatedAt.replace(/[:.]/g, '-')}.json`,
   );
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(report, null, 2), 'utf8');
