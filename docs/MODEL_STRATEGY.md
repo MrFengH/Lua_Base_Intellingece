@@ -54,6 +54,30 @@ collapsing approximate ages into exact ones.
 
 Do not escalate because output "feels" better on one example.
 
+### 2026-09-10 measurement (P4-S3) — quality bar not met, escalation not decided here
+
+`npm run corpus:eval` scored the 0.6B model against `extraction-corpus-v1` (30 cases): **1 of 30
+cases passed and 43.8% field accuracy overall**. Full numbers, split by source and language, are
+in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md); every failing field, with its input, expected
+and actual value, is in `docs/qvac-eval-runs/2026-09-10T06-01-35-961Z.json`.
+
+**The stated quality bar — the TESTING.md cases pass — is not met.** Two findings from this run,
+recorded rather than acted on:
+
+- **`E-11`: certainty was never `Uncertain`.** Across all 30 cases the model never emitted
+  `certainty: 'Uncertain'`, even on cases whose input is explicitly hedged ("around eleven years
+  old", "maybe eight"). `P3-S1`'s `UNCERTAINTY_LANGUAGE` confidence branch is real and reachable
+  from the mock, but this run gives no evidence the real model ever drives it.
+- 2 of 30 calls returned truncated, unparseable JSON ("Unterminated string in JSON"), both on
+  longer Spanish inputs with several equipment groups — a possible context-size or
+  max-output-tokens ceiling, not investigated further here.
+
+**Escalation is not decided by this document.** This measurement is the data the
+`qvac-model-selection` skill's escalation gate asks for; whether to escalate to
+`QWEN3_1_7B_INST_Q4`, adjust the prompt, or accept the baseline for the demo is a separate
+decision for a person, to be recorded in `DECISIONS.md` if taken. No model, quantization or prompt
+change was made to produce or in response to this number.
+
 ## Capability 2 — Speech to text (PLANNED, not implemented)
 
 Voice is the natural capture mode for someone walking a hospital corridor. `SpeechToTextPort`

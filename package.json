@@ -22,6 +22,7 @@
     "seed": "tsx scripts/seed.ts",
     "app:smoke": "npm run build && tsx scripts/app-smoke.ts",
     "qvac:smoke": "tsx scripts/qvac-smoke.ts",
+    "corpus:eval": "tsx scripts/qvac-corpus-eval.ts",
     "sqlite:smoke": "tsx scripts/sqlite-smoke.ts"
   },
   "dependencies": {

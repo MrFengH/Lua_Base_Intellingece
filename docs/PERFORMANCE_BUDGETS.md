@@ -134,5 +134,31 @@ targets to check against.
 
 ## Recorded results
 
-None yet. Add entries here as they are measured, newest first, each with its environment
-header. Use the `qvac-benchmark` skill, which produces the required format.
+### 2026-09-10 — P4-S3 extraction accuracy baseline, `extraction-corpus-v1`
+
+`npm run corpus:eval` against `QWEN3_600M_INST_Q4` (the default completion model), 30 corpus
+cases. Full detail, including every failing field per case, is in
+`docs/qvac-eval-runs/2026-09-10T06-01-35-961Z.json`.
+
+| Metric                           | Value                                                                 |
+| -------------------------------- | --------------------------------------------------------------------- |
+| Cases passed                     | 1 / 30                                                                |
+| Field accuracy (overall)         | 43.8% (127 / 290 fields)                                              |
+| official-workbook                | 1 / 13 cases, 50.4% field accuracy                                    |
+| challenge-brief                  | 0 / 4 cases, 35.2% field accuracy                                     |
+| project-authored                 | 0 / 13 cases, 40.5% field accuracy                                    |
+| English                          | 1 / 18 cases, 45.9% field accuracy                                    |
+| Spanish                          | 0 / 12 cases, 37.1% field accuracy                                    |
+| Adversarial (P4-S2, 8 cases)     | 0 / 8 cases, 52.0% field accuracy                                     |
+| Fabricated values                | 53                                                                    |
+| Missing expected values          | 30                                                                    |
+| Wrong values                     | 53                                                                    |
+| Normalization failures           | 6                                                                     |
+| Follow-up failures               | 19                                                                    |
+| Extraction/JSON errors           | 2 of 30 calls ("Unterminated string in JSON", truncated model output) |
+| Certainty `Uncertain` ever seen? | **No** — see the `E-11` finding below                                 |
+
+This is the structured-output success rate row above, filled in for the first time: **43.8%
+field accuracy**, well short of a usable quality bar. Per `docs/ROADMAP.md`, P4-S3, this is
+recorded as a baseline, not fixed here — no prompt, model or quantization change was made to
+produce it. See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) for the escalation question this raises.

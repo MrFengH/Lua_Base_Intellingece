@@ -135,21 +135,44 @@ criteria are in the `offline-validation` skill. Summary:
 
 ## Regression tests
 
-**PROPOSED — a versioned extraction corpus.** The cases above currently live as individual
-tests. A small versioned dataset would make model changes comparable:
+**Built — a versioned extraction corpus** (`extraction-corpus-v1`), under `tests/fixtures/corpus/`
+and exercised by `tests/application/extraction-corpus.test.ts` as part of `npm test`, against the
+development mock only:
 
-- 20 to 40 observations covering the case table, Spanish and English;
-- each with expected structured output and, importantly, expected **absences**;
-- stored under `tests/fixtures/`, synthetic only, no real facility or patient data;
-- versioned, so a model or prompt change is scored as a delta rather than argued about;
-- reported as a pass rate, which becomes the structured-output success rate in
-  [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md).
+- the 10 official Voice Test Prompts, the 3 reusable official Installed Base rows (7, 13, 15), the
+  4 genuine challenge-brief examples, and the project-authored cases from this file and from
+  `README.md`, each carrying its real `origin.source` (`official-workbook`, `challenge-brief` or
+  `project-authored`) and locator;
+- each case asserts a structured expectation per field using one of `Known`, `DeclaredUnknown` or
+  `MustNotInfer` — never a bare `null` — so "the model correctly recognised an explicit unknown" is
+  distinguishable from "the model simply never fabricated anything";
+- **every case in the corpus asserts at least one absence**, enforced by a dedicated test
+  (`extraction-corpus.test.ts`, "asserts at least one absence... in every case (P4-S2)"), so the
+  corpus proves nothing was invented and not only that something was found;
+- eight cases are explicitly adversarial anti-fabrication tests, named in
+  `docs/ROADMAP.md` P4-S2: official prompts 4, 5, 6, 8, 9 and 10, plus Installed Base rows 7 and
+  15;
+- `validateCorpus` checks structural consistency (unique ids, valid ages, recognised modalities and
+  follow-up fields) and is itself covered by a test that a broken case is flagged, not silently
+  accepted.
 
-Not built in this change. Build it when the first model or prompt change needs to be justified,
-which is the moment it stops being speculative.
+Scoring the real QVAC model against this corpus is a separate, on-demand step — see `P4-S3` below
+and `scripts/qvac-corpus-eval.ts` — because it needs a real model and is not deterministic, so it
+must never join `npm test`.
 
 Alongside it: any bug fixed gets a test in the same change, and any documented behaviour that
 changes gets its documentation updated in the same change.
+
+### P4-S3 — real-model scoring run
+
+`scripts/qvac-corpus-eval.ts` runs the same corpus against the real `@qvac/sdk` adapter
+(`QvacObservationExtractionService`, the identical class the application uses) and the real
+`FollowUpQuestionService`. It is invoked with `npm run corpus:eval`, needs a real model and
+compatible hardware, and is **not** part of `npm test`. It never changes the model, the
+quantization or the prompt; it only measures. Results are written under `docs/qvac-eval-runs/`,
+dated, with one JSON file per run recording every case's pass/fail status and, for each failure,
+the input, the expected value and what the model actually produced. The pass rate is summarised in
+[PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) and [MODEL_STRATEGY.md](MODEL_STRATEGY.md).
 
 ## Running everything
 
