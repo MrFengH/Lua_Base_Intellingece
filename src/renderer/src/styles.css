@@ -676,7 +676,7 @@ b.numeric,
   display: grid;
   grid-template-columns: 38px 1fr auto;
   gap: 8px;
-  align-items: end;
+  align-items: center;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   padding: 7px;
