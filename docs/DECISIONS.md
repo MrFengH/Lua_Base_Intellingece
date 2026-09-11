@@ -1,386 +1,424 @@
-# Technical decisions
+# Decisiones técnicas
 
-Lightweight ADR log. Decisions 1 to 9 are **Accepted** and implemented; they were recorded in a
-short Decision / Why / Trade-off form and are left as written. Decisions from 10 onward use the
-fuller Context / Decision / Reason / Consequences / Status form and may be **Proposed**, meaning
-the question is open and nothing has been built.
+Registro ligero de ADR. Las decisiones 1 a 9 están **Aceptadas** e implementadas; se registraron en un
+formato breve de Decisión / Por qué / Compromiso y se dejan tal como fueron escritas. Las decisiones a partir de la
+10 usan el formato más completo de Contexto / Decisión / Razón / Consecuencias / Estado y pueden estar
+**Propuestas**, lo que significa que la pregunta sigue abierta y no se ha construido nada.
 
-Only architecturally significant decisions belong here. Do not change an accepted decision
-without adding a new entry that supersedes it.
+Solo las decisiones arquitectónicamente significativas pertenecen aquí. No cambie una decisión aceptada
+sin agregar una nueva entrada que la reemplace.
 
-## 1. A small offline-first Electron slice
+## 1. Un corte pequeño de Electron, offline-first
 
-**Decision:** Use Electron, React, TypeScript, and local SQLite, with one end-to-end workflow rather than a broad platform skeleton.
+**Decisión:** Usar Electron, React, TypeScript y SQLite local, con un solo flujo de extremo a extremo en lugar de un esqueleto de plataforma amplio.
 
-**Why:** The challenge needs a demonstrable desktop path from field input to locally persisted intelligence. A narrow typed IPC boundary preserves desktop security and keeps the UI testable.
+**Por qué:** El desafío necesita una ruta de escritorio demostrable desde la entrada de campo hasta inteligencia persistida localmente. Una frontera de IPC tipada y estrecha preserva la seguridad de escritorio y mantiene la interfaz testeable.
 
-**Trade-off:** Packaging, authentication, synchronization, and production deployment are intentionally deferred.
+**Compromiso:** El empaquetado, la autenticación, la sincronización y el despliegue de producción quedan deliberadamente pospuestos.
 
-## 2. Built-in `node:sqlite` behind a repository adapter
+## 2. `node:sqlite` incorporado detrás de un adaptador de repositorio
 
-**Decision:** Use Node 24's `node:sqlite` through `LocalSqliteDatabase` and repository ports.
+**Decisión:** Usar el `node:sqlite` de Node 24 a través de `LocalSqliteDatabase` y puertos de repositorio.
 
-**Why:** It provides real transactions without a native addon build/install step. The adapter contains its release-candidate API surface, so another driver can replace it later.
+**Por qué:** Proporciona transacciones reales sin un paso de compilación/instalación de addon nativo. El adaptador contiene su superficie de API de release candidate, de modo que otro driver pueda reemplazarlo más adelante.
 
-**Trade-off:** The prototype requires a compatible modern Node/Electron runtime and should reassess the adapter when the API stabilizes.
+**Compromiso:** El prototipo requiere un runtime moderno y compatible de Node/Electron y debería reevaluar el adaptador cuando la API se estabilice.
 
-## 3. Real QVAC path, explicit development mock
+## 3. Ruta real de QVAC, mock de desarrollo explícito
 
-**Decision:** Implement QVAC with `@qvac/sdk` 0.19.0 and keep a separate deterministic mock that is named `Development Mock` at runtime.
+**Decisión:** Implementar QVAC con `@qvac/sdk` 0.19.0 y mantener un mock determinista separado que se nombra `Development Mock` en tiempo de ejecución.
 
-**Why:** Local structured extraction is the product path, while deterministic development and automated testing must not depend on a model download. A failed QVAC load/inference remains a visible error; engine identity never changes silently.
+**Por qué:** La extracción estructurada local es la ruta del producto, mientras que el desarrollo determinista y las pruebas automatizadas no deben depender de una descarga de modelo. Un fallo de carga/inferencia de QVAC sigue siendo un error visible; la identidad del motor nunca cambia silenciosamente.
 
-**Trade-off:** The first real run needs the model artifact and compatible local hardware. The mock handles a constrained demonstration grammar only.
+**Compromiso:** La primera ejecución real necesita el artefacto del modelo y hardware local compatible. El mock solo maneja una gramática de demostración acotada.
 
-## 4. On-device inference, not delegated inference
+## 4. Inferencia en el dispositivo, no inferencia delegada
 
-**Decision:** Use QVAC's local llama.cpp completion handler. Do not describe peer-to-peer model execution as part of this implementation.
+**Decisión:** Usar el handler local de completado llama.cpp de QVAC. No describir la ejecución de modelos entre pares (peer-to-peer) como parte de esta implementación.
 
-**Why:** QVAC SDK 0.19 removed inference delegation/provider APIs. Keeping the extraction port independent preserves an extension seam without claiming a capability the installed SDK does not expose.
+**Por qué:** El SDK de QVAC 0.19 eliminó las APIs de delegación de inferencia/proveedor. Mantener el puerto de extracción independiente preserva un punto de extensión sin afirmar una capacidad que el SDK instalado no expone.
 
-**Trade-off:** Every real inference run consumes resources on the user's device.
+**Compromiso:** Cada ejecución real de inferencia consume recursos en el dispositivo del usuario.
 
-## 5. Immutable observations and derived projections
+## 5. Observaciones inmutables y proyecciones derivadas
 
-**Decision:** Save visits as append-only evidence aggregates and build Customer 360 as a versioned read projection.
+**Decisión:** Guardar las visitas como agregados de evidencia de solo anexado (append-only) y construir Customer 360 como una proyección de lectura versionada.
 
-**Why:** A new field report can corroborate or contradict older evidence. Overwriting the prior row would erase source, observer, time, uncertainty, and auditability.
+**Por qué:** Un nuevo reporte de campo puede corroborar o contradecir evidencia anterior. Sobrescribir la fila previa borraría el origen, el observador, el momento, la incertidumbre y la auditabilidad.
 
-**Trade-off:** Read logic is more deliberate than CRUD over one mutable equipment table.
+**Compromiso:** La lógica de lectura es más deliberada que un CRUD sobre una única tabla mutable de equipos.
 
-## 6. Unknown is a first-class state
+## 6. Lo desconocido es un estado de primera clase
 
-**Decision:** Distinguish `Missing`, `Known`, and `DeclaredUnknown`; keep age as a discriminated union.
+**Decisión:** Distinguir `Missing`, `Known` y `DeclaredUnknown`; mantener la antigüedad como una unión discriminada.
 
-**Why:** Missing input can justify one follow-up, while “I don't know” must be retained and must not trigger the same question forever. Qualitative ages must not become fabricated numeric years.
+**Por qué:** Una entrada faltante puede justificar un seguimiento, mientras que un "no lo sé" debe conservarse y no debe disparar la misma pregunta para siempre. Las antigüedades cualitativas no deben convertirse en años numéricos fabricados.
 
-**Trade-off:** Consumers must handle nulls and tagged unions explicitly.
+**Compromiso:** Los consumidores deben manejar explícitamente valores nulos y uniones etiquetadas.
 
-## 7. Explainable confidence and duplicates
+## 7. Confianza y duplicados explicables
 
-**Decision:** Store versioned confidence reasons/evidence IDs and versioned duplicate scores/reasons. Never auto-merge.
+**Decisión:** Almacenar razones/IDs de evidencia de confianza versionados y puntajes/razones de duplicados versionados. Nunca fusionar automáticamente.
 
-**Why:** A business user must be able to trace why information appears and distinguish repeated entry, independent corroboration, and conflict.
+**Por qué:** Un usuario de negocio debe poder rastrear por qué aparece cierta información y distinguir entrada repetida, corroboración independiente, y conflicto.
 
-**Trade-off:** The current heuristics are intentionally simple and will need calibration against real reviewed data.
+**Compromiso:** Las heurísticas actuales son deliberadamente simples y necesitarán calibrarse contra datos reales revisados.
 
-## 8. No invented freshness policy
+## 8. Ninguna política de vigencia inventada
 
-**Decision:** Calculate observation/verification elapsed days but return freshness and aging classifications as unknown/not configured.
+**Decisión:** Calcular los días transcurridos desde la observación/verificación pero devolver las clasificaciones de vigencia y antigüedad como desconocidas/no configuradas.
 
-**Why:** No authoritative business thresholds were supplied. Showing a guessed red/amber/green policy would present invention as domain fact.
+**Por qué:** No se suministraron umbrales de negocio autoritativos. Mostrar una política inventada de rojo/ámbar/verde presentaría una invención como un hecho de dominio.
 
-**Trade-off:** Aging counts remain unavailable until product owners define thresholds.
+**Compromiso:** Los conteos de antigüedad permanecen no disponibles hasta que los dueños del producto definan los umbrales.
 
-## 9. Synthetic fixtures only
+## 9. Solo fixtures sintéticos
 
-**Decision:** Seed three fictitious facilities with fictitious manufacturers and mark every fixture as synthetic.
+**Decisión:** Sembrar tres instalaciones ficticias con fabricantes ficticios y marcar cada fixture como sintético.
 
-**Why:** The referenced workbook and DOCX were unavailable. Synthetic data provides a stable demo and automated-test baseline without implying source provenance that does not exist.
+**Por qué:** El libro de trabajo y el DOCX referenciados no estaban disponibles. Los datos sintéticos proporcionan una línea base estable para el demo y las pruebas automatizadas sin implicar una procedencia de origen que no existe.
 
-**Trade-off:** Spreadsheet ingestion and mapping to official challenge records remain unimplemented until the source file is provided.
+**Compromiso:** La ingesta de hojas de cálculo y el mapeo a los registros oficiales del desafío permanecen sin implementar hasta que se proporcione el archivo fuente.
 
-### Amendment, 2026-09-09 — the workbook arrived and its 20 records are now the seed
+### Enmienda, 2026-09-09 — llegó el libro de trabajo y sus 20 registros son ahora la semilla
 
-**What changed:** `Dummy_Installed_Base_Hackathon.xlsx` was supplied. Its README sheet states the
-20 rows of `Dummy Installed Base` are "to use as expected output / database seed", so they replace
-the three invented facilities outright. `DEVELOPMENT_SEED_KEY` moves from
-`synthetic-development-v1` to `official-dummy-v1` so the idempotent seed re-applies over an
-existing database. `Hospital DemoCare Pacific` keeps the id `seed-customer-democare`.
+**Qué cambió:** Se suministró `Dummy_Installed_Base_Hackathon.xlsx`. Su hoja README indica que las
+20 filas de `Dummy Installed Base` son "para usar como salida esperada / semilla de base de datos", así que reemplazan
+por completo a las tres instalaciones inventadas. `DEVELOPMENT_SEED_KEY` pasa de
+`synthetic-development-v1` a `official-dummy-v1` para que la semilla idempotente se vuelva a aplicar sobre una
+base de datos ya existente. `Hospital DemoCare Pacific` conserva el id `seed-customer-democare`.
 
-**What was ingested:** 20 equipment records as 13 visits over 13 facilities, in 13 cities and 10
-countries, using the six fictional brands of the `Dummy Reference Lists` sheet. The rows are
-transcribed into a static typed table,
-`src/infrastructure/seed/official-installed-base-records.ts`. **There is no runtime XLSX parser
-and no new dependency**; the data is static and a parser would add a parsing surface for nothing.
+**Qué se ingirió:** 20 registros de equipos como 13 visitas en 13 instalaciones, en 13 ciudades y 10
+países, usando las seis marcas ficticias de la hoja `Dummy Reference Lists`. Las filas se transcriben en una tabla
+estática tipada, `src/infrastructure/seed/official-installed-base-records.ts`. **No hay ningún parser de
+XLSX en tiempo de ejecución ni ninguna dependencia nueva**; los datos son estáticos y un parser agregaría una superficie de
+análisis para nada.
 
-**Why replace rather than complement:** keeping the invented facilities alongside would populate
-the aggregate view with sites a reviewer cannot find in the official file, which is worse than
-either option alone. The guardrail is untouched: the workbook states that all of its customers,
-brands, models and observations are synthetic and exist only for hackathon testing.
+**Por qué reemplazar en lugar de complementar:** mantener las instalaciones inventadas junto con las oficiales poblaría
+la vista agregada con sitios que un revisor no puede encontrar en el archivo oficial, lo cual es peor que
+cualquiera de las dos opciones por separado. La salvaguarda queda intacta: el propio libro de trabajo declara que todos sus
+clientes, marcas, modelos y observaciones son sintéticos y existen únicamente para pruebas de hackathon.
 
-**Three mapping rules, and what each refuses to invent:**
+**Tres reglas de mapeo, y qué se niega a inventar cada una:**
 
-1. **Age.** An official integer age `n` becomes `{ type: 'estimate', minYears: n, maxYears: n }`,
-   never `exact`. That is decision 15 below, taken by a person. The derived installation year
-   still equals the official `Estimated Installation Year` column on all 20 rows.
-2. **Status and confidence level** are transcribed from the official `Status` and `Confidence`
-   columns rather than re-derived, because the slice's purpose is to reproduce the workbook. No
-   status or confidence _semantics_ changed: the derivation rules that apply to newly captured
-   observations are untouched.
-3. **Confidence score stays `null`.** The workbook supplies a level and no score. Attaching a
-   number to a level the source never quantified would be the fabrication the schema exists to
-   prevent, so the level carries coded reasons and no score.
+1. **Antigüedad.** Una antigüedad entera oficial `n` se convierte en `{ type: 'estimate', minYears: n, maxYears: n }`,
+   nunca en `exact`. Esa es la decisión 15 de abajo, tomada por una persona. El año de instalación derivado
+   sigue siendo igual a la columna oficial `Estimated Installation Year` en las 20 filas.
+2. **El estado y el nivel de confianza** se transcriben de las columnas oficiales `Status` y `Confidence` en
+   lugar de volver a derivarse, porque el propósito de este corte es reproducir el libro de trabajo. No cambió
+   ninguna _semántica_ de estado o confianza: las reglas de derivación que aplican a las observaciones recién
+   capturadas quedan intactas.
+3. **El puntaje de confianza permanece `null`.** El libro de trabajo suministra un nivel y ningún puntaje. Adjuntar un
+   número a un nivel que la fuente nunca cuantificó sería precisamente la fabricación que el esquema existe para
+   prevenir, así que el nivel lleva razones codificadas y ningún puntaje.
 
-**Trade-off:** the transcription is manual, so the workbook and the fixture can drift if the
-official file is ever revised. `tests/infrastructure/official-seed.test.ts` pins the counts, the
-brand set, the modality set, the age mapping and the derived installation years against the
-transcribed table, which makes a drift visible but cannot detect a change made only in the
-spreadsheet.
+**Compromiso:** la transcripción es manual, así que el libro de trabajo y el fixture pueden divergir si el
+archivo oficial se revisa alguna vez. `tests/infrastructure/official-seed.test.ts` fija los conteos, el
+conjunto de marcas, el conjunto de modalidades, el mapeo de antigüedad y los años de instalación derivados contra la
+tabla transcrita, lo cual hace visible una divergencia pero no puede detectar un cambio hecho solo en la
+hoja de cálculo.
 
-**Retiring the seed it replaces.** `seed_imports` recorded _that_ a seed key had been applied but
-never _which rows it wrote_, so there was no safe way to remove the previous seed's data. Because
-the official seed deliberately reuses `seed-customer-democare`, `seed-session-democare` and
-`seed-visit-democare`, a database built by the previous seed failed to start with
-`UNIQUE constraint failed: observation_sessions.id`. Migration `002_session_seed_ownership` adds a
-nullable `observation_sessions.seed_key`, and `applySeed` now retires the seeds listed in
-`SUPERSEDED_SEED_KEYS` before writing. Ownership, not a heuristic, decides what is removed: a
-user-captured session always has `seed_key IS NULL` and is therefore never in range. The migration
-backfills existing rows from the `fixture` key in `evidence_items.metadata_json`, which is exact,
-because until then the seed was the only writer of evidence metadata and the capture workflow wrote
-none. Retirement refuses to run rather than break a link if a surviving session supersedes a seeded
-one.
+**Retirando la semilla que reemplaza.** `seed_imports` registraba _que_ se había aplicado una clave de semilla pero
+nunca _qué filas escribió_, así que no había forma segura de eliminar los datos de la semilla anterior. Debido a que la
+semilla oficial reutiliza deliberadamente `seed-customer-democare`, `seed-session-democare` y
+`seed-visit-democare`, una base de datos construida por la semilla anterior fallaba al iniciar con
+`UNIQUE constraint failed: observation_sessions.id`. La migración `002_session_seed_ownership` agrega un
+`observation_sessions.seed_key` nulable, y `applySeed` ahora retira las semillas listadas en
+`SUPERSEDED_SEED_KEYS` antes de escribir. La propiedad, no una heurística, decide qué se elimina: una
+sesión capturada por un usuario siempre tiene `seed_key IS NULL` y por lo tanto nunca queda en el rango. La migración
+rellena las filas existentes a partir de la clave `fixture` en `evidence_items.metadata_json`, lo cual es exacto,
+porque hasta ese momento la semilla era la única que escribía metadatos de evidencia y el flujo de captura no escribía ninguno.
+La retirada se niega a ejecutarse en lugar de romper un vínculo si una sesión sobreviviente reemplaza a una sembrada.
 
-**Two things the workbook contradicts itself about**, transcribed as the structured columns state
-and flagged rather than silently resolved: observations 12 and 20 carry a model in the
-`Dummy Model` column while their own `Follow-up Answer` and `Notes` say the model was not visible.
-The structured column is the one the README designates as the seed, so it wins; the follow-up text
-is retained verbatim as evidence, so both readings stay inspectable.
+**Dos cosas sobre las que el libro de trabajo se contradice a sí mismo**, transcritas tal como indican las columnas
+estructuradas y señaladas en lugar de resolverse silenciosamente: las observaciones 12 y 20 llevan un modelo en la
+columna `Dummy Model` mientras que su propio `Follow-up Answer` y `Notes` dicen que el modelo no era visible.
+La columna estructurada es la que el README designa como la semilla, así que esa gana; el texto de seguimiento
+se conserva textualmente como evidencia, así que ambas lecturas quedan inspeccionables.
 
-## 10. The model reports observations; rules derive everything else
+## 10. El modelo reporta observaciones; las reglas derivan todo lo demás
 
-**Context:** A language model asked for a confidence score will supply one, and it will look reasonable. The same applies to installation years, duplicate judgements, and provenance.
+**Contexto:** Un modelo de lenguaje al que se le pide un puntaje de confianza suministrará uno, y parecerá razonable. Lo mismo aplica a los años de instalación, los juicios de duplicados, y la procedencia.
 
-**Decision:** The extraction schema the model must satisfy contains only what a person could have said: modality, quantity, manufacturer, model, approximate age, notes, and how certain the speaker sounded. Confidence, installation estimates, field provenance, observation status, and duplicate scores are computed by inspectable domain rules after extraction.
+**Decisión:** El esquema de extracción que el modelo debe satisfacer contiene solo lo que una persona podría haber dicho: modalidad, cantidad, fabricante, modelo, antigüedad aproximada, notas, y qué tan seguro sonaba el hablante. La confianza, las estimaciones de instalación, la procedencia de campo, el estado de la observación, y los puntajes de duplicados se calculan mediante reglas de dominio inspeccionables después de la extracción.
 
-**Reason:** It puts the boundary between "reported" and "derived" in the type system rather than in a prompt instruction. Derived values become versionable and testable, and a reviewer can disagree with a score by reading its reason codes.
+**Razón:** Pone la frontera entre "reportado" y "derivado" en el sistema de tipos en lugar de en una instrucción de prompt. Los valores derivados se vuelven versionables y testeables, y un revisor puede estar en desacuerdo con un puntaje leyendo sus códigos de razón.
 
-**Consequences:** The model cannot express nuance the domain rules do not model, so new derived semantics need code rather than prompt changes. Every derived value carries a strategy version so stored records stay interpretable after the rules change.
+**Consecuencias:** El modelo no puede expresar matices que las reglas de dominio no modelan, así que una nueva semántica derivada necesita código en lugar de cambios de prompt. Cada valor derivado lleva una versión de estrategia para que los registros almacenados sigan siendo interpretables después de que cambien las reglas.
 
-**Status:** Accepted, implemented.
+**Estado:** Aceptada, implementada.
 
-## 11. The smallest model that meets the bar
+## 11. El modelo más pequeño que cumple con el estándar
 
-**Context:** QVAC's registry offers completion models from 0.6B to well beyond what a field laptop can run, and the SDK ships twelve worker plugins.
+**Contexto:** El registro de QVAC ofrece modelos de completado desde 0.6B hasta bien más allá de lo que puede ejecutar un laptop de campo, y el SDK incluye doce plugins de worker.
 
-**Decision:** Use `QWEN3_600M_INST_Q4` and enable exactly one plugin. Escalate to a larger model only after measuring the smaller one against the extraction corpus and recording which cases it failed.
+**Decisión:** Usar `QWEN3_600M_INST_Q4` y habilitar exactamente un plugin. Escalar a un modelo más grande solo después de medir el más pequeño contra el corpus de extracción y registrar qué casos falló.
 
-**Reason:** Model size costs download time, disk, RAM, latency, and battery on every device in the field. The extraction task is heavily constrained by a JSON schema and a six-value modality vocabulary, so structural correctness is enforced outside the model.
+**Razón:** El tamaño del modelo cuesta tiempo de descarga, disco, RAM, latencia y batería en cada dispositivo en el campo. La tarea de extracción está fuertemente restringida por un esquema JSON y un vocabulario de seis valores de modalidad, así que la corrección estructural se impone fuera del modelo.
 
-**Consequences:** Extraction quality is bounded by a small model, which makes the adversarial test corpus in TESTING.md the mechanism that detects when the bound has been reached. The escalation path to `QWEN3_1_7B_INST_Q4` is documented in MODEL_STRATEGY.md and costs about 2.8× the download.
+**Consecuencias:** La calidad de extracción está acotada por un modelo pequeño, lo cual hace que el corpus de prueba adversarial en TESTING.md sea el mecanismo que detecta cuándo se ha alcanzado ese límite. La ruta de escalado a `QWEN3_1_7B_INST_Q4` está documentada en MODEL_STRATEGY.md y cuesta aproximadamente 2.8× la descarga.
 
-**Status:** Accepted, implemented.
+**Estado:** Aceptada, implementada.
 
-## 12. Voice capture via QVAC Whisper
+## 12. Captura de voz mediante Whisper de QVAC
 
-**Context:** Someone walking a hospital corridor would rather speak than type. `SpeechToTextPort` and the `Voice` evidence source already exist as typed seams, unimplemented.
+**Contexto:** Alguien caminando por un pasillo de hospital preferiría hablar en lugar de escribir. `SpeechToTextPort` y la fuente de evidencia `Voice` ya existen como puntos de extensión tipados, sin implementar.
 
-**Decision:** When voice ships, use the QVAC whispercpp transcription plugin with a tiny Whisper model, feeding its transcript into the existing extraction pipeline unchanged.
+**Decisión:** Cuando la voz se lance, usar el plugin de transcripción whispercpp de QVAC con un modelo Whisper diminuto, alimentando su transcripción al pipeline de extracción existente sin cambios.
 
-**Reason:** It reuses the whole downstream pipeline, adds about 42 MiB rather than a second large model, and keeps audio on the device. Transcription and extraction stay separate concerns, so a transcription error is visible as text before it becomes structured data.
+**Razón:** Reutiliza todo el pipeline posterior, agrega alrededor de 42 MiB en lugar de un segundo modelo grande, y mantiene el audio en el dispositivo. La transcripción y la extracción siguen siendo aspectos separados, así que un error de transcripción es visible como texto antes de convertirse en datos estructurados.
 
-**Consequences:** A second model lifecycle to manage, a second plugin in the bundle, and an open question about whether the two models may be resident simultaneously, which needs a measured RAM figure first. The quality bar must be defined against hospital vocabulary, not general word error rate.
+**Consecuencias:** Un segundo ciclo de vida de modelo que gestionar, un segundo plugin en el bundle, y una pregunta abierta sobre si los dos modelos pueden ser residentes simultáneamente, lo cual necesita primero una cifra de RAM medida. El estándar de calidad debe definirse contra el vocabulario hospitalario, no la tasa de error de palabras general.
 
-**Status:** Proposed. Nothing implemented.
+**Estado:** Propuesta. Nada implementado.
 
-## 13. Deduplication stays deterministic and never auto-merges
+## 13. La deduplicación permanece determinista y nunca fusiona automáticamente
 
-**Context:** Two colleagues visiting the same hospital will both report a NovaMed MR. Deciding whether that is one scanner or two is the core data-quality problem, and embedding similarity is the obvious tempting answer.
+**Contexto:** Dos colegas que visitan el mismo hospital reportarán ambos un MR de NovaMed. Decidir si eso es un escáner o dos es el problema central de calidad de datos, y la similitud por embeddings es la respuesta tentadora obvia.
 
-**Decision:** Keep the transparent scored candidate model. Same customer and compatible known modality are hard gates; manufacturer, model, and age adjust a versioned score with coded reasons. Candidates are surfaced for human resolution and are never merged automatically.
+**Decisión:** Mantener el modelo transparente de candidatos puntuados. El mismo cliente y una modalidad conocida compatible son compuertas obligatorias; el fabricante, el modelo y la compatibilidad de antigüedad ajustan un puntaje versionado con razones codificadas. Los candidatos se presentan para resolución humana y nunca se fusionan automáticamente.
 
-**Reason:** An automatic merge on a low-certainty score destroys the audit trail the append-only design exists to protect, and it is unrecoverable. A wrong candidate is a review item; a wrong merge is lost evidence.
+**Razón:** Una fusión automática sobre un puntaje de baja certeza destruye el rastro de auditoría que el diseño de solo anexado existe para proteger, y es irrecuperable. Un candidato equivocado es un ítem de revisión; una fusión equivocada es evidencia perdida.
 
-**Consequences:** Duplicates accumulate until someone reviews them, and the heuristics need calibration against real reviewed data that does not exist yet. Serial number and location within the facility would substantially improve matching and are not captured today.
+**Consecuencias:** Los duplicados se acumulan hasta que alguien los revisa, y las heurísticas necesitan calibrarse contra datos reales revisados que aún no existen. El número de serie y la ubicación dentro de la instalación mejorarían sustancialmente el emparejamiento y hoy no se capturan.
 
-**Status:** Accepted for the current scoring; the improvements are Proposed. See DATA_SCHEMA.md.
+**Estado:** Aceptada para la puntuación actual; las mejoras están Propuestas. Ver DATA_SCHEMA.md.
 
-## 14. Local database is not encrypted at rest
+## 14. La base de datos local no está cifrada en reposo
 
-**Context:** The SQLite file holds facility names, equipment details, reporter identity, and verbatim observation text, on laptops that travel to hospitals.
+**Contexto:** El archivo SQLite guarda nombres de instalaciones, detalles de equipos, identidad del reportero, y texto de observación textual, en laptops que viajan a hospitales.
 
-**Decision:** The prototype relies on operating-system account isolation and full-disk encryption. No application-level database encryption.
+**Decisión:** El prototipo depende del aislamiento de cuentas del sistema operativo y del cifrado de disco completo. Ningún cifrado de base de datos a nivel de aplicación.
 
-**Reason:** `node:sqlite` provides no encryption, and adding a native encrypted driver would reintroduce the native build step that decision 2 avoided. For a prototype with synthetic data the trade is acceptable.
+**Razón:** `node:sqlite` no proporciona cifrado, y agregar un driver cifrado nativo reintroduciría el paso de compilación nativa que la decisión 2 evitó. Para un prototipo con datos sintéticos, el compromiso es aceptable.
 
-**Consequences:** Device theft is an unmitigated gap, recorded as such in PRIVACY_OFFLINE.md. Any real deployment must revisit this before field use, which likely means changing the persistence driver.
+**Consecuencias:** El robo del dispositivo es una brecha no mitigada, registrada como tal en PRIVACY_OFFLINE.md. Cualquier despliegue real debe revisar esto antes del uso en campo, lo cual probablemente implique cambiar el driver de persistencia.
 
-**Status:** Accepted for the prototype. Revisiting it is Proposed and blocking for production.
+**Estado:** Aceptada para el prototipo. Revisarla está Propuesto y es bloqueante para producción.
 
-## 15. Official integer ages map to `estimate`, not `exact` (`X-06`)
+## 15. Las antigüedades enteras oficiales se mapean a `estimate`, no a `exact` (`X-06`)
 
-**Context:** The 20 official records in the challenge workbook carry a bare integer age. The age
-union in `src/domain/model/age.ts` offers `exact`, `estimate`, `range`, `qualitative`, `unknown`.
-Fifteen of the twenty official follow-up answers that produced those integers say "around",
-"about", "maybe", "roughly", "I think" or "my best estimate". `P2-D1` in `docs/ROADMAP.md` names
-this a human decision gate, not one an implementing agent may take, because it sets the honesty
-baseline for every seeded record and for everything Customer 360 and the Dashboard display from
-it.
+**Contexto:** Los 20 registros oficiales del libro de trabajo del desafío llevan una antigüedad entera simple. La
+unión de antigüedad en `src/domain/model/age.ts` ofrece `exact`, `estimate`, `range`, `qualitative`, `unknown`.
+Quince de las veinte respuestas de seguimiento oficiales que produjeron esos enteros dicen "around",
+"about", "maybe", "roughly", "I think" o "my best estimate". `P2-D1` en `docs/ROADMAP.md` designa
+esto como una puerta de decisión humana, no una que un agente implementador pueda tomar, porque establece la línea base de
+honestidad para cada registro sembrado y para todo lo que Customer 360 y el Dashboard muestran a partir de él.
 
-**Decision (human, 2026-09-09):** An official integer age `n` maps to
-`{ type: 'estimate', minYears: n, maxYears: n }`, **never** to `{ type: 'exact', years: n }`.
+**Decisión (humana, 2026-09-09):** Una antigüedad entera oficial `n` se mapea a
+`{ type: 'estimate', minYears: n, maxYears: n }`, **nunca** a `{ type: 'exact', years: n }`.
 
-**Reason:** The source integers are hedged reported answers, not measurements. Recording a hedged
-statement as exact would bake a violation of `AGENTS.md` rule 10 — never turn human uncertainty
-into machine certainty — into the demo data itself.
+**Razón:** Los enteros de origen son respuestas reportadas y matizadas, no mediciones. Registrar una afirmación
+matizada como exacta incrustaría una violación de la regla 10 de `AGENTS.md` —nunca convertir incertidumbre
+humana en certeza de máquina— dentro de los propios datos del demo.
 
-**Consequences:**
+**Consecuencias:**
 
-1. `deriveInstallationEstimate` returns a single `year` when `minYears === maxYears`, so derived
-   installation years still match the official `Estimated Installation Year` column exactly (row 1:
-   2026 − 7 = 2019, official 2019). No divergence introduced there.
-2. `capture-workflow-service.ts` derives `status` to `Estimated` whenever the age is an estimate or
-   a range. This divergence is accepted for now; it is independent evidence that status should come
-   from how the information was obtained rather than from age precision, which `B-01` addresses
-   separately. It is not a reason to revisit this decision.
+1. `deriveInstallationEstimate` devuelve un único `year` cuando `minYears === maxYears`, así que los años de
+   instalación derivados siguen coincidiendo exactamente con la columna oficial `Estimated Installation Year` (fila 1:
+   2026 − 7 = 2019, oficial 2019). No se introduce ninguna divergencia ahí.
+2. `capture-workflow-service.ts` deriva `status` como `Estimated` siempre que la antigüedad sea una estimación o
+   un rango. Esta divergencia se acepta por ahora; es evidencia independiente de que el estado debería provenir de
+   cómo se obtuvo la información en lugar de la precisión de la antigüedad, lo cual `B-01` aborda por separado. No es
+   una razón para reconsiderar esta decisión.
 
-   **Narrowed on implementation, 2026-09-09.** The consequence is smaller than anticipated. It was
-   written expecting every seeded row to become `Estimated`. The seed is a transcription, not a
-   capture, so it carries the official `Status` column directly and keeps the workbook's 13
-   `Reported` and 7 `Estimated`. The derivation rule is untouched and the divergence it describes
-   now applies only to observations captured through the workflow, which is exactly the scope
-   `B-01` covers.
+   **Reducida en la implementación, 2026-09-09.** La consecuencia es menor de lo anticipado. Se escribió esperando que
+   cada fila sembrada se convirtiera en `Estimated`. La semilla es una transcripción, no una captura, así que lleva la
+   columna oficial `Status` directamente y conserva los 13 `Reported` y 7 `Estimated` del libro de trabajo. La regla de
+   derivación queda intacta y la divergencia que describe ahora solo aplica a las observaciones capturadas mediante el
+   flujo de trabajo, que es exactamente el alcance que cubre `B-01`.
 
-**Status:** Accepted (human decision, resolves `X-06` / `P2-D1`). **Implemented** in `P2-S2`:
-`src/infrastructure/seed/development-seed.ts` maps every official integer age through
-`officialAge`, and `tests/infrastructure/official-seed.test.ts` fails if any seeded age is
-recorded as `exact`. Folded into the amendment of decision 9 above.
+**Estado:** Aceptada (decisión humana, resuelve `X-06` / `P2-D1`). **Implementada** en `P2-S2`:
+`src/infrastructure/seed/development-seed.ts` mapea cada antigüedad entera oficial mediante
+`officialAge`, y `tests/infrastructure/official-seed.test.ts` falla si alguna antigüedad sembrada se
+registra como `exact`. Incorporada en la enmienda de la decisión 9 de arriba.
 
-## 16. Observation status is asked, and an explicit statement of source outranks age precision (`B-01`, `B-02`)
+## 16. El estado de la observación se pregunta, y una declaración explícita del origen prevalece sobre la precisión de la antigüedad (`B-01`, `B-02`)
 
-**Context:** `status` was derived from age precision alone, so `Confirmed` and `Unknown` were
-unreachable and `Reported` meant "the age was not an estimate" rather than "someone told me". The
-official Agent Question Logic makes step 10 a question, and step 12, the review confirmation, the
-only derived step it marks `Required?: Yes`.
+**Contexto:** `status` se derivaba únicamente de la precisión de la antigüedad, así que `Confirmed` y `Unknown` eran
+inalcanzables y `Reported` significaba "la antigüedad no era una estimación" en lugar de "alguien me lo dijo". La
+Lógica Oficial de Preguntas del Agente hace del paso 10 una pregunta, y del paso 12, la confirmación de revisión, el
+único paso derivado que marca `Required?: Yes`.
 
-**Decision:**
+**Decisión:**
 
-1. Status is decided by a session-level `observationBasis`, which is set either by an unambiguous
-   statement of source in the observer's own words or by their answer to a `Preferred` follow-up
-   question. The four official values map one to one onto it, and a declined question stores
+1. El estado lo decide un `observationBasis` a nivel de sesión, que se establece ya sea por una declaración
+   inequívoca de origen en las propias palabras del observador o por su respuesta a una pregunta de seguimiento
+   `Preferred`. Los cuatro valores oficiales se mapean uno a uno sobre él, y una pregunta rechazada almacena
    `Unknown`.
-2. The age-derived rule survives only as the fallback for an observation whose source was never
-   established. It no longer overrides a stated source.
-3. Saving requires an explicit confirmation of a deterministic summary. Reaching `READY_FOR_REVIEW`
-   is not a confirmation, and a correction withdraws one already given.
+2. La regla derivada de la antigüedad sobrevive solo como respaldo para una observación cuyo origen nunca se
+   estableció. Ya no anula un origen declarado.
+3. Guardar requiere una confirmación explícita de un resumen determinista. Alcanzar `READY_FOR_REVIEW` no es
+   una confirmación, y una corrección retira una ya dada.
 
-**Reason:** Status and certainty are different axes, and letting age precision decide status made
-the four-value vocabulary decorative. `ROADMAP.md` had proposed keeping the age-derived `Estimated`
-as an override and asking only a two-way question. That was narrowed by a human on 2026-09-09:
-"I saw an MR that looked about seven years old" must be `Confirmed` with an `Uncertain` age, which
-an age override would make impossible, and the official question offers three answers rather than
-two. `ROADMAP.md` also said not to infer status from wording; the narrower rule adopted here reads
-only unambiguous provenance markers and asks whenever they are absent, so nothing is inferred from
-silence.
+**Razón:** El estado y la certeza son ejes diferentes, y dejar que la precisión de la antigüedad decida el estado
+volvía decorativo el vocabulario de cuatro valores. `ROADMAP.md` había propuesto mantener el `Estimated` derivado de
+la antigüedad como una anulación y preguntar solo una pregunta de dos vías. Eso fue acotado por una persona el 2026-09-09:
+"vi un MR que parecía tener unos siete años" debe ser `Confirmed` con una antigüedad `Uncertain`, lo cual una anulación por
+antigüedad haría imposible, y la pregunta oficial ofrece tres respuestas en lugar de dos. `ROADMAP.md` también decía no
+inferir el estado a partir de la redacción; la regla más estrecha adoptada aquí lee solo marcadores de procedencia
+inequívocos y pregunta siempre que estén ausentes, así que nada se infiere del silencio.
 
-**Consequences:** A short deterministic classifier now sits in `src/domain/rules/`, applied to the
-observer's own words and to the answer. It resolves nothing it is unsure of, which routes the case
-to the question. The extraction schema, the prompt and the model are untouched: provenance is
-derived by rules, consistent with decision 10. Confidence weights and certainty semantics are
-unchanged. Historical records keep the status they were saved with.
+**Consecuencias:** Ahora hay un clasificador determinista breve en `src/domain/rules/`, aplicado a las propias
+palabras del observador y a la respuesta. No resuelve nada de lo que no está seguro, lo cual enruta el caso hacia la
+pregunta. El esquema de extracción, el prompt y el modelo quedan intactos: la procedencia se deriva mediante reglas,
+consistente con la decisión 10. Los pesos de confianza y la semántica de certeza no cambian. Los registros históricos
+conservan el estado con el que fueron guardados.
 
-**Status:** Accepted, implemented in `P3-S3`. Per-equipment-group provenance, and showing status
-and provenance on Customer 360, are not in scope here; the latter is `P3-S4`.
+**Estado:** Aceptada, implementada en `P3-S3`. La procedencia por grupo de equipo, y mostrar el estado y la
+procedencia en Customer 360, no están en el alcance aquí; lo segundo es `P3-S4`.
 
-## 17. A contradiction inside one capture is asked about, never resolved by message order (`E-06`)
+## 17. Una contradicción dentro de una captura se pregunta, nunca se resuelve por el orden de los mensajes (`E-06`)
 
-**Decision:** When a later statement supplies a value that differs from a value the same capture
-already holds, the workflow does not simply overwrite it.
+**Decisión:** Cuando una declaración posterior suministra un valor que difiere de un valor que la misma captura ya
+tiene, el flujo de trabajo no simplemente lo sobrescribe.
 
-1. Evidence ids accumulate on the field. A value that changes keeps the evidence ids of the value
-   it replaced, so both claims stay reachable. This applies to extraction merges, follow-up
-   answers, declared unknowns and review corrections alike.
-2. Three outcomes are distinguished, and none of them looks at the values themselves. A field that
-   was `Missing`, `DeclaredUnknown`, or already held the same value is enriched. Wording that
-   explicitly corrects the earlier claim is a self-correction and the later value is taken. Anything
-   else is a contradiction.
-3. A contradiction keeps the later value active so review has something to show, marks the field
-   `Uncertain`, and enqueues a `Required` follow-up naming both claims. Review cannot be reached and
-   any existing confirmation is withdrawn until it is answered.
+1. Los IDs de evidencia se acumulan en el campo. Un valor que cambia conserva los IDs de evidencia del valor
+   que reemplazó, así que ambas afirmaciones siguen siendo alcanzables. Esto aplica por igual a las fusiones de
+   extracción, las respuestas de seguimiento, los desconocidos declarados y las correcciones de revisión.
+2. Se distinguen tres resultados, y ninguno de ellos mira los valores en sí. Un campo que estaba
+   `Missing`, `DeclaredUnknown`, o que ya tenía el mismo valor, se enriquece. Una redacción que corrige
+   explícitamente la afirmación anterior es una autocorrección y se toma el valor posterior. Cualquier otra cosa
+   es una contradicción.
+3. Una contradicción mantiene activo el valor posterior para que la revisión tenga algo que mostrar, marca el
+   campo `Uncertain`, y encola un seguimiento `Required` que nombra ambas afirmaciones. La revisión no se puede
+   alcanzar y cualquier confirmación existente se retira hasta que se responda.
 
-**Reason:** `mergeEquipment` previously overwrote any known value whenever an extraction returned a
-non-null one, with no comparison and no record. That turned "era NovaMed... bueno, quizá Orion" into
-a confident stored fact chosen by message order, which is exactly the fabrication rule 10 forbids.
-`ROADMAP.md` requires the field to stay known, become `Uncertain`, and produce a follow-up naming
-both values, and forbids deciding which one is right.
+**Razón:** `mergeEquipment` antes sobrescribía cualquier valor conocido siempre que una extracción devolviera uno
+no nulo, sin comparación ni registro. Eso convertía "era NovaMed... bueno, quizá Orion" en un hecho almacenado con
+confianza total, elegido por el orden de los mensajes, que es exactamente la fabricación que prohíbe la regla 10.
+`ROADMAP.md` requiere que el campo permanezca conocido, se vuelva `Uncertain`, y produzca un seguimiento que nombre
+ambos valores, y prohíbe decidir cuál es el correcto.
 
-**Consequences:** `CaptureEquipmentDraft` carries the open disagreements while they last; nothing
-new is persisted and no migration was needed, because the accumulated evidence ids and the
-append-only evidence rows already answer what was said first, what was said after, and which value
-was accepted. Self-correction is recognised by a short deterministic list of explicit phrases, with
-hedged wording always winning over it, so a guess is never mistaken for a correction. Confidence
-weights, certainty semantics, `observationBasis`, `projectionSignature`, the official seed, the
-extraction schema and the model are untouched. `DuplicateCandidate` is a separate mechanism for
-observations across saved sessions and is not involved.
+**Consecuencias:** `CaptureEquipmentDraft` lleva los desacuerdos abiertos mientras duran; no se persiste nada nuevo
+y no se necesitó ninguna migración, porque los IDs de evidencia acumulados y las filas de evidencia de solo anexado
+ya responden qué se dijo primero, qué se dijo después, y qué valor se aceptó. La autocorrección se reconoce mediante
+una lista determinista breve de frases explícitas, y la redacción matizada siempre gana sobre ella, así que una
+suposición nunca se confunde con una corrección. Los pesos de confianza, la semántica de certeza, `observationBasis`,
+`projectionSignature`, la semilla oficial, el esquema de extracción y el modelo quedan intactos. `DuplicateCandidate`
+es un mecanismo separado para observaciones entre sesiones guardadas y no está involucrado.
 
-**Status:** Accepted, implemented in `P3-S6`. A restated modality is out of reach of the extraction
-merge, because extraction groups equipment by modality; that correction goes through the review
-correction path, which preserves the earlier evidence ids in the same way.
+**Estado:** Aceptada, implementada en `P3-S6`. Una modalidad reformulada está fuera del alcance de la fusión de
+extracción, porque la extracción agrupa el equipo por modalidad; esa corrección pasa por la vía de corrección de
+revisión, que preserva los IDs de evidencia anteriores de la misma manera.
 
-## 18. `QWEN3_4B_INST_Q4_K_M` is the recommended demo configuration; the production default stays `QWEN3_600M_INST_Q4`
+## 18. `QWEN3_4B_INST_Q4_K_M` es la configuración de demo recomendada; el valor por defecto de producción sigue siendo `QWEN3_600M_INST_Q4`
 
-**Context:** `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, referenced from the
-2026-09-10 addendum in `docs/MODEL_STRATEGY.md`, measured `QWEN3_4B_INST_Q4_K_M` at 82.6% overall
-field accuracy against `extraction-corpus-v1` (EN 84.7%, ES 76.7%, adversarial 82.4%, 11
-fabricated values, 7/30 full-pass) — materially better than the 43.8–49.8% recorded for the
-production default `QWEN3_600M_INST_Q4` across its own runs. A human approved `QWEN3_4B_INST_Q4_K_M`
-as the recommended, documented configuration for the upcoming demo.
+**Contexto:** `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, referenciado desde el
+apéndice del 2026-09-10 en `docs/MODEL_STRATEGY.md`, midió `QWEN3_4B_INST_Q4_K_M` en 82.6% de precisión
+general de campo contra `extraction-corpus-v1` (EN 84.7%, ES 76.7%, adversarial 82.4%, 11
+valores fabricados, 7/30 aprobación total) — materialmente mejor que el 43.8–49.8% registrado para el
+valor por defecto de producción `QWEN3_600M_INST_Q4` a lo largo de sus propias ejecuciones. Una persona aprobó
+`QWEN3_4B_INST_Q4_K_M` como la configuración recomendada y documentada para el demo próximo.
 
-**Decision:** `QvacObservationExtractionService`'s `QvacModelDescriptor` union and its re-exports
-now include `QWEN3_4B_INST_Q4_K_M`, and `src/main/composition-root.ts` reads an explicit
-`CIB_QVAC_MODEL` environment variable (`600m` or `4b`, unrecognized values fail loudly) to select
-it. **The global/production default, used by `npm run dev`, `npm test`, and any run that leaves
-`CIB_QVAC_MODEL` unset, remains `QWEN3_600M_INST_Q4`.** `QWEN3_600M_INST_Q4` remains available and
-documented as a fast fallback for the demo itself, selected the same way with `CIB_QVAC_MODEL=600m`.
+**Decisión:** La unión `QvacModelDescriptor` de `QvacObservationExtractionService` y sus reexportaciones
+ahora incluyen `QWEN3_4B_INST_Q4_K_M`, y `src/main/composition-root.ts` lee una variable de entorno
+explícita `CIB_QVAC_MODEL` (`600m` o `4b`; los valores no reconocidos fallan explícitamente) para
+seleccionarlo. **El valor por defecto global/de producción, usado por `npm run dev`, `npm test`, y cualquier
+ejecución que deje `CIB_QVAC_MODEL` sin definir, sigue siendo `QWEN3_600M_INST_Q4`.** `QWEN3_600M_INST_Q4`
+sigue disponible y documentado como un respaldo rápido para el propio demo, seleccionado de la misma manera con
+`CIB_QVAC_MODEL=600m`.
 
-**Reason:** Switching the global default this close to the demo would destabilize dev and test
-workflows that were not built or measured against the 4B model's load time and latency (162,579 ms
-load, up to 17,013 ms per-case latency in the earlier comparison run in `PERFORMANCE_BUDGETS.md`).
-Making the demo's model choice an explicit, documented environment variable gets the measured
-quality improvement into the demo without touching the default anyone else's workflow relies on.
+**Razón:** Cambiar el valor por defecto global tan cerca del demo desestabilizaría los flujos de desarrollo y
+prueba que no se construyeron ni se midieron contra el tiempo de carga y la latencia del modelo 4B (162,579 ms
+de carga, hasta 17,013 ms de latencia por caso en la ejecución de comparación anterior en `PERFORMANCE_BUDGETS.md`).
+Convertir la elección de modelo del demo en una variable de entorno explícita y documentada lleva la mejora de
+calidad medida al demo sin tocar el valor por defecto del que depende el flujo de trabajo de cualquier otra persona.
 
-**Consequences:** There is still no cloud fallback; `@qvac/sdk` remains the only inference runtime
-in either configuration. The demo presenter must set `CIB_QVAC_MODEL=4b` deliberately — see the
-[README](../README.md#selecting-the-demo-model) — or the application silently runs the 600M
-default, which is correct behaviour, not a defect, but worth knowing before presenting. The prompt,
-schema, and model tuning are untouched; `QWEN3_4B_INST_Q4_K_M` still fails 23/30 corpus cases and
-never emits `Uncertain`, so this is a demo-configuration decision, not a claim that the quality bar
-in `docs/TESTING.md` is met.
+**Consecuencias:** Sigue sin haber ningún respaldo en la nube; `@qvac/sdk` sigue siendo el único runtime de
+inferencia en ambas configuraciones. Quien presenta el demo debe establecer `CIB_QVAC_MODEL=4b` deliberadamente —
+ver el [README](../README.md#modelo-recomendado-para-la-demo)— o la aplicación ejecutará silenciosamente el
+valor por defecto 600M, lo cual es un comportamiento correcto, no un defecto, pero vale la pena saberlo antes de
+presentar. El prompt, el esquema y el ajuste del modelo quedan intactos; `QWEN3_4B_INST_Q4_K_M` todavía falla en
+23/30 casos del corpus y nunca emite `Uncertain`, así que esto es una decisión de configuración de demo, no una
+afirmación de que se cumpla el estándar de calidad de `docs/TESTING.md`.
 
-**Status:** Accepted (human decision, 2026-09-10), implemented.
+**Estado:** Aceptada (decisión humana, 2026-09-10), implementada.
 
-## 19. Voice dictation implemented via QVAC's whisper engine; `WHISPER_TINY_Q8_0` selected; RAM coexistence with the completion model left unmeasured
+## 19. Dictado de voz implementado mediante el motor whisper de QVAC; se seleccionó `WHISPER_TINY_Q8_0`; la coexistencia de RAM con el modelo de completado queda sin medir
 
-**Context:** `docs/MODEL_STRATEGY.md`'s Capability 2 ("Speech to text") had stood as PLANNED since
-`SpeechToTextPort` was stubbed. The feature request was to let a field colleague dictate an
-observation, transcribe it locally through `@qvac/sdk`, and place the transcript into the
-existing text input for review — never auto-submitted, no change to the existing text
-capture/extraction workflow.
+**Contexto:** La Capacidad 2 de `docs/MODEL_STRATEGY.md` ("Voz a texto") había permanecido como PLANIFICADA desde
+que `SpeechToTextPort` quedó como un stub. La solicitud de funcionalidad era permitir que un colega de campo dicte una
+observación, la transcriba localmente mediante `@qvac/sdk`, y coloque la transcripción en el campo de texto
+existente para revisión — nunca enviada automáticamente, sin cambio en el flujo existente de captura/extracción de
+texto.
 
-**Decision:** `SpeechToTextPort` was implemented, not just stubbed: it now mirrors
-`ObservationExtractionPort`'s lifecycle (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
-`QvacSpeechToTextService` (`src/infrastructure/qvac/qvac-speech-to-text.ts`) implements it against
-`@qvac/sdk`'s `transcribe()`/`loadModel()`/`unloadModel()`, selecting `WHISPER_TINY_Q8_0`
-(≈42 MiB) — the smallest **multilingual** candidate in the registry, over the smaller-in-name but
-Spanish-only `WHISPER_SPANISH_TINY_Q8_0`, because this product's own positioning requires Spanish
-_and_ English input. `language: 'auto'` and `translate: false` are set explicitly so the
-transcript stays in whatever language was actually spoken. `DevelopmentMockSpeechToTextService`
-mirrors the extraction capability's mock/production split for `npm run dev` / `npm test` /
-`npm run app:smoke`. The renderer records via `MediaRecorder` + `getUserMedia`, decodes the result
-with `AudioContext.decodeAudioData`, and re-encodes it as 16-bit PCM WAV (`src/renderer/src/audio/wav-encoder.ts`) before sending it over IPC — MediaRecorder's own webm/opus output is not among
-QVAC's `SUPPORTED_AUDIO_FORMATS`. `src/main/voice-transcription.ts` writes that buffer to a
-single-use OS temp file only for the duration of the transcription call and always deletes it
-afterward; no raw audio is ever persisted. The transcript is appended into the existing text
-`<textarea>` for the observer to review/edit; nothing is auto-submitted, and the Send flow,
-extraction prompt, schema, and model are all untouched.
+**Decisión:** `SpeechToTextPort` se implementó, no solo se dejó como stub: ahora refleja el ciclo de vida de
+`ObservationExtractionPort` (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
+`QvacSpeechToTextService` (`src/infrastructure/qvac/qvac-speech-to-text.ts`) lo implementa contra
+`transcribe()`/`loadModel()`/`unloadModel()` de `@qvac/sdk`, seleccionando `WHISPER_TINY_Q8_0`
+(≈42 MiB) —el candidato **multilingüe** más pequeño del registro— por encima del `WHISPER_SPANISH_TINY_Q8_0`,
+más pequeño en nombre pero solo en español, porque el propio posicionamiento de este producto requiere entrada en
+español _y_ en inglés. `language: 'auto'` y `translate: false` se establecen explícitamente para que la
+transcripción se mantenga en el idioma que realmente se habló. `DevelopmentMockSpeechToTextService`
+refleja la división mock/producción de la capacidad de extracción para `npm run dev` / `npm test` /
+`npm run app:smoke`. El renderer graba mediante `MediaRecorder` + `getUserMedia`, decodifica el resultado
+con `AudioContext.decodeAudioData`, y lo vuelve a codificar como WAV PCM de 16 bits (`src/renderer/src/audio/wav-encoder.ts`) antes de enviarlo por IPC — la propia salida webm/opus de MediaRecorder no está entre
+los `SUPPORTED_AUDIO_FORMATS` de QVAC. `src/main/voice-transcription.ts` escribe ese búfer en un archivo
+temporal del sistema operativo de un solo uso solo durante la duración de la llamada de transcripción y siempre lo elimina
+después; ningún audio crudo se persiste jamás. La transcripción se agrega al `<textarea>` de texto
+existente para que el observador la revise/edite; nada se envía automáticamente, y el flujo de Enviar, el prompt de
+extracción, el esquema y el modelo quedan todos intactos.
 
-**Reason:** Voice is the natural capture mode for someone walking a hospital corridor, and the
-port already existed as a named placeholder for exactly this. Reusing the existing
-`ObservationExtractionPort` lifecycle shape (rather than inventing a new one) keeps both
-capabilities symmetric and equally testable. Deriving WAV from the browser's own decode of its own
-recording avoids adding an audio-transcoding dependency (e.g. ffmpeg) purely to satisfy QVAC's
-supported-format list.
+**Razón:** La voz es el modo natural de captura para alguien que camina por un pasillo de hospital, y el
+puerto ya existía como un marcador nombrado exactamente para esto. Reutilizar la forma existente del ciclo de vida de
+`ObservationExtractionPort` (en lugar de inventar una nueva) mantiene ambas capacidades simétricas e igualmente
+testeables. Derivar el WAV a partir de la propia decodificación del navegador de su propia grabación evita agregar una
+dependencia de transcodificación de audio (por ejemplo ffmpeg) solo para satisfacer la lista de formatos soportados de
+QVAC.
 
-**Consequences:** Two independent adapters now each call `heartbeat()`, `loadModel`, and
-`unloadModel`, which `docs/QVAC_ARCHITECTURE.md` had already flagged as the trigger for building a
-shared `QvacRuntime` — not built here, to avoid mixing a refactor into a feature change. If a
-session uses voice while the completion model is already loaded, both models are resident until
-disposal; this RAM-coexistence cost has **not been measured**, and `docs/MODEL_STRATEGY.md`
-records it as an open question rather than a resolved one. No word-error-rate measurement exists
-either; `npm run qvac:voice-smoke` proves the pipeline runs on real hardware, not that
-transcription is accurate. `docs/PRIVACY_OFFLINE.md`'s "Audio artifacts" stays marked as never
-persisted (by design, not by omission), and its "Voice transcripts" row was corrected to note that
-a transcript is not a distinct evidence category — it becomes ordinary text once sent.
+**Consecuencias:** Ahora dos adaptadores independientes llaman cada uno a `heartbeat()`, `loadModel`, y
+`unloadModel`, lo cual `docs/QVAC_ARCHITECTURE.md` ya había señalado como el disparador para construir un
+`QvacRuntime` compartido — no construido aquí, para evitar mezclar una refactorización con un cambio de
+funcionalidad. Si una sesión usa voz mientras el modelo de completado ya está cargado, ambos modelos permanecen
+residentes hasta la liberación de recursos; este costo de coexistencia de RAM **no se ha medido**, y
+`docs/MODEL_STRATEGY.md` lo registra como una pregunta abierta en lugar de resuelta. Tampoco existe ninguna
+medición de tasa de error de palabras; `npm run qvac:voice-smoke` demuestra que el pipeline se ejecuta en hardware
+real, no que la transcripción sea precisa. Los "Artefactos de audio" de `docs/PRIVACY_OFFLINE.md` permanecen
+marcados como nunca persistidos (por diseño, no por omisión), y su fila "Transcripciones de voz" se corrigió para
+señalar que una transcripción no es una categoría de evidencia distinta — se convierte en texto ordinario una vez
+enviada.
 
-**Status:** Accepted, implemented. Quality bar (WER) and RAM-coexistence measurement remain open,
-tracked in `docs/MODEL_STRATEGY.md`.
+**Estado:** Aceptada, implementada. El estándar de calidad (WER) y la medición de coexistencia de RAM siguen
+abiertos, rastreados en `docs/MODEL_STRATEGY.md`.
+
+## 20. El Panel gana bandas de antigüedad descriptivas y estado/confianza/enriquecimiento proyectados; la vigencia sigue sin política (reemplaza parcialmente la decisión 8)
+
+**Contexto:** La decisión 8 dejó `agingEquipment` en `null` y `agingPolicy` en `'Not configured'` porque
+nadie con autoridad de producto había suministrado umbrales de negocio, y `docs/ROADMAP.md` (`P5-S3`) fijó
+como no-objetivo explícito "no agregar umbrales de antigüedad ni una política de antigüedad" hasta que
+alguien lo hiciera. El Panel seguía cumpliendo solo el mínimo de agregación y no respondía preguntas que un
+usuario de negocio haría de inmediato: cuántos equipos hay por país, qué tan confiable es la información, o
+qué tan viejo es el parque instalado, aunque la antigüedad estructurada ya estuviera en cada grupo
+proyectado.
+
+**Decisión:** Un producto owner (la persona que da esta instrucción, 2026-09-10) suministró explícitamente
+tres bandas de antigüedad — `0–5 años`, `6–10 años`, `Más de 10 años` — como una **distribución descriptiva
+de los años reportados**, no como una política de vigencia/obsolescencia; no se usan las etiquetas
+Reciente/Envejeciendo/Obsoleto porque el desafío no define esos criterios de negocio o clínicos. Las bandas
+viven en `src/domain/rules/age-bands.ts` (`AGE_BANDS`), no en el componente React, para que un cambio de
+límites futuro no requiera rehacer el Panel. `classifyAgeBand` clasifica cada `ApproximateAge` estructurado
+—nunca texto libre visible— y coloca una `estimate`/`range` que cruza dos bandas en un bucket
+`Rango/indeterminado` explícito en lugar de redondear a un extremo, y una edad `qualitative` recibe el mismo
+bucket en lugar de que se le fabrique un número. `DashboardView` (`src/application/contracts/queries.ts`)
+reemplaza `agingEquipment`/`agingPolicy` por `ageKnown`, `ageUnknown` y `ageBands`, y añade
+`equipmentByCountry` (cantidad proyectada por país, sustituyendo `observationsByCountry`),
+`equipmentByStatus`, `equipmentByConfidence`, `pendingDuplicateCandidates` y `fieldEnrichmentGaps`
+(`Missing` contado aparte de `DeclaredUnknown`, por la misma razón que la decisión 6). Todas estas métricas
+se derivan de la proyección de Customer 360 ya existente (`getCustomer360`/`InstalledBaseItem`); no se tocó
+el esquema de persistencia, la extracción QVAC, ni la lógica de deduplicación.
+
+**Razón:** La decisión 8 protegía contra inventar un umbral sin autoridad para hacerlo; ahora existe esa
+autoridad para una distribución puramente descriptiva, y las bandas se documentan como tal en la propia
+interfaz ("Distribución descriptiva, no una política de vigencia"). La vigencia (`freshnessStatus`, días
+desde la observación/verificación) es un eje distinto — cuánto hace que se vio el equipo, no cuántos años
+tiene — y la decisión 8 sigue vigente ahí sin cambios: `freshnessStatus` permanece `'Unknown'` porque ningún
+umbral rojo/ámbar/verde fue suministrado para ese eje.
+
+**Consecuencias:** `docs/ROADMAP.md` `P5-S3` queda desactualizado en su no-objetivo de antigüedad; sigue
+siendo correcto en no agregar identificación de oportunidades ni un mapa, que este cambio tampoco añade.
+Cualquier consumidor futuro de `DashboardView` debe leer `ageBands`/`ageKnown`/`ageUnknown` en lugar de los
+campos retirados. Si alguna vez se define una política real de vigencia u obsolescencia, debe ser una nueva
+decisión separada de esta — las bandas de aquí no deben reinterpretarse silenciosamente como esa política.
+
+**Estado:** Aceptada, implementada.

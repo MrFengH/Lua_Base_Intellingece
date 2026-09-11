@@ -1,256 +1,255 @@
-# Model strategy
+# Estrategia de modelos
 
-Which local models this application needs, and why the smallest one that works is the right
-one.
+Qué modelos locales necesita esta aplicación, y por qué el más pequeño que funciona es el
+correcto.
 
-## Selection rule
+## Regla de selección
 
-**Use the smallest local model that meets the stated quality bar.** Model size costs download
-time, disk, RAM, latency, battery, and bundle weight on every device in the field. A larger
-model is justified only after a smaller one has been measured and shown to fail.
+**Use el modelo local más pequeño que cumpla con el estándar de calidad declarado.** El tamaño del modelo cuesta tiempo
+de descarga, disco, RAM, latencia, batería y peso del paquete en cada dispositivo en el campo. Un modelo
+más grande solo se justifica después de que uno más pequeño haya sido medido y se haya demostrado que falla.
 
-A capability is added when the product needs it, not because the SDK supports it. QVAC 0.19.0
-ships plugins for embeddings, RAG, OCR, translation, text-to-speech, diffusion, classification,
-and vision. **None of those are enabled**, and none should be until a real requirement exists.
+Una capacidad se agrega cuando el producto la necesita, no porque el SDK la soporte. QVAC 0.19.0
+incluye plugins para embeddings, RAG, OCR, traducción, texto a voz, difusión, clasificación,
+y visión. **Ninguno de ellos está habilitado**, y ninguno debería estarlo hasta que exista un requisito real.
 
-All model constants and sizes below are verified against
-`node_modules/@qvac/inference/dist/models/registry/models.js`. Re-verify them there before
-relying on a figure, and re-verify after any SDK upgrade.
+Todas las constantes de modelo y tamaños de abajo están verificadas contra
+`node_modules/@qvac/inference/dist/models/registry/models.js`. Vuelva a verificarlas ahí antes de
+confiar en una cifra, y vuelva a verificarlas después de cualquier actualización del SDK.
 
-## Capability 1 — Text extraction (implemented)
+## Capacidad 1 — Extracción de texto (implementada)
 
-Natural-language observation to a validated structured record.
+Observación en lenguaje natural convertida en un registro estructurado validado.
 
-|                    |                                                                                                                                                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Purpose**        | Turn "vi dos resonadores NovaMed..." into schema-conformant equipment groups                                                                              |
-| **Model type**     | Instruction-tuned LLM with JSON-schema-constrained generation                                                                                             |
-| **QVAC plugin**    | `@qvac/sdk/llamacpp-completion/plugin`                                                                                                                    |
-| **Selected model** | `QWEN3_600M_INST_Q4` (`Qwen3-0.6B-Q4_0.gguf`)                                                                                                             |
-| **Size**           | 382,156,480 B ≈ 365 MiB                                                                                                                                   |
-| **Quantization**   | Q4_0                                                                                                                                                      |
-| **Context size**   | 4096, set in the adapter                                                                                                                                  |
-| **Languages**      | Spanish and English input required; Qwen3 is multilingual                                                                                                 |
-| **Platform**       | Windows desktop via Electron; Vulkan 1.4 driver per QVAC system requirements                                                                              |
-| **Quality bar**    | The extraction cases in [TESTING.md](TESTING.md) pass, including grouping by differing age and preserving uncertainty                                     |
-| **Expected RAM**   | **TBD** — see [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md)                                                                                            |
-| **Fallback**       | None in QVAC mode. Load or inference failure surfaces as an error. `CIB_QVAC_MODEL_PATH` allows a locally provisioned GGUF, which needs no network at all |
-| **Lifecycle**      | Explicit initialization, loaded once, reused for every extraction, unloaded on application disposal                                                       |
+|                         |                                                                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**           | Convertir "vi dos resonadores NovaMed..." en grupos de equipos conformes al esquema                                                                                        |
+| **Tipo de modelo**      | LLM ajustado a instrucciones con generación restringida por esquema JSON                                                                                                   |
+| **Plugin de QVAC**      | `@qvac/sdk/llamacpp-completion/plugin`                                                                                                                                     |
+| **Modelo seleccionado** | `QWEN3_600M_INST_Q4` (`Qwen3-0.6B-Q4_0.gguf`)                                                                                                                              |
+| **Tamaño**              | 382,156,480 B ≈ 365 MiB                                                                                                                                                    |
+| **Cuantización**        | Q4_0                                                                                                                                                                       |
+| **Tamaño de contexto**  | 4096, establecido en el adaptador                                                                                                                                          |
+| **Idiomas**             | Se requiere entrada en español e inglés; Qwen3 es multilingüe                                                                                                              |
+| **Plataforma**          | Escritorio Windows vía Electron; driver Vulkan 1.4 según los requisitos de sistema de QVAC                                                                                 |
+| **Estándar de calidad** | Los casos de extracción en [TESTING.md](TESTING.md) pasan, incluyendo la agrupación por antigüedad diferente y la preservación de la incertidumbre                         |
+| **RAM esperada**        | **Por determinar** — ver [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md)                                                                                                  |
+| **Respaldo (fallback)** | Ninguno en modo QVAC. Un fallo de carga o inferencia se muestra como un error. `CIB_QVAC_MODEL_PATH` permite un GGUF aprovisionado localmente, que no necesita ninguna red |
+| **Ciclo de vida**       | Inicialización explícita, cargado una vez, reutilizado en cada extracción, descargado al liberar recursos de la aplicación                                                 |
 
-### Why the 0.6B model
+### Por qué el modelo 0.6B
 
-It is the smallest completion model in the registry that the task was built against, and the
-task is heavily constrained: output is bounded by a JSON schema, the domain vocabulary is small
-(six modalities), and every result is re-validated by Zod. Structural correctness is enforced
-outside the model, so model capacity is spent on comprehension, not formatting.
+Es el modelo de completado más pequeño del registro contra el que se construyó la tarea, y la
+tarea está fuertemente restringida: la salida está acotada por un esquema JSON, el vocabulario del dominio es pequeño
+(seis modalidades), y cada resultado se vuelve a validar con Zod. La corrección estructural se impone
+fuera del modelo, así que la capacidad del modelo se dedica a la comprensión, no al formato.
 
-### When to escalate
+### Cuándo escalar
 
-Escalate to `QWEN3_1_7B_INST_Q4` (1,056,782,912 B ≈ 1008 MiB, about 2.8× the download) **only**
-after measuring the 0.6B model against the full extraction corpus and recording which cases it
-fails. Record the measurement in PERFORMANCE_BUDGETS.md and the decision in DECISIONS.md.
-Symptoms that would justify it: systematic mis-grouping of multi-device utterances, or
-collapsing approximate ages into exact ones.
+Escale a `QWEN3_1_7B_INST_Q4` (1,056,782,912 B ≈ 1008 MiB, aproximadamente 2.8× la descarga) **solo**
+después de medir el modelo 0.6B contra el corpus de extracción completo y registrar qué casos falla.
+Registre la medición en PERFORMANCE_BUDGETS.md y la decisión en DECISIONS.md.
+Síntomas que lo justificarían: agrupación incorrecta sistemática de enunciados con múltiples dispositivos, o
+colapsar antigüedades aproximadas en antigüedades exactas.
 
-Do not escalate because output "feels" better on one example.
+No escale porque la salida "se sienta" mejor en un solo ejemplo.
 
-### 2026-09-10 measurement (P4-S3) — quality bar not met, escalation not decided here
+### Medición del 2026-09-10 (P4-S3) — estándar de calidad no cumplido, escalado no decidido aquí
 
-`npm run corpus:eval` scored the 0.6B model against `extraction-corpus-v1` (30 cases): **1 of 30
-cases passed and 43.8% field accuracy overall**. Full numbers, split by source and language, are
-in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md); every failing field, with its input, expected
-and actual value, is in `docs/qvac-eval-runs/2026-09-10T06-01-35-961Z.json`.
+`npm run corpus:eval` puntuó el modelo 0.6B contra `extraction-corpus-v1` (30 casos): **1 de 30
+casos pasó y 43.8% de precisión de campo en general**. Las cifras completas, divididas por origen e idioma, están
+en [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md); cada campo fallido, con su entrada, valor esperado
+y valor real, está en `docs/qvac-eval-runs/2026-09-10T06-01-35-961Z.json`.
 
-**The stated quality bar — the TESTING.md cases pass — is not met.** Two findings from this run,
-recorded rather than acted on:
+**El estándar de calidad declarado —que pasen los casos de TESTING.md— no se cumple.** Dos hallazgos de esta
+ejecución, registrados en lugar de actuados:
 
-- **`E-11`: certainty was never `Uncertain`.** Across all 30 cases the model never emitted
-  `certainty: 'Uncertain'`, even on cases whose input is explicitly hedged ("around eleven years
-  old", "maybe eight"). `P3-S1`'s `UNCERTAINTY_LANGUAGE` confidence branch is real and reachable
-  from the mock, but this run gives no evidence the real model ever drives it.
-- 2 of 30 calls returned truncated, unparseable JSON ("Unterminated string in JSON"), both on
-  longer Spanish inputs with several equipment groups — a possible context-size or
-  max-output-tokens ceiling, not investigated further here.
+- **`E-11`: la certeza nunca fue `Uncertain`.** A lo largo de los 30 casos el modelo nunca emitió
+  `certainty: 'Uncertain'`, incluso en casos cuya entrada está explícitamente matizada ("around eleven years
+  old", "maybe eight"). La rama de confianza `UNCERTAINTY_LANGUAGE` de `P3-S1` es real y alcanzable
+  desde el mock, pero esta ejecución no da evidencia de que el modelo real la active alguna vez.
+- 2 de 30 llamadas devolvieron JSON truncado e imposible de parsear ("Unterminated string in JSON"), ambas en
+  entradas en español más largas con varios grupos de equipos — un posible límite de tamaño de contexto o
+  de tokens máximos de salida, no investigado más a fondo aquí.
 
-**Escalation is not decided by this document.** This measurement is the data the
-`qvac-model-selection` skill's escalation gate asks for; whether to escalate to
-`QWEN3_1_7B_INST_Q4`, adjust the prompt, or accept the baseline for the demo is a separate
-decision for a person, to be recorded in `DECISIONS.md` if taken. No model, quantization or prompt
-change was made to produce or in response to this number.
+**El escalado no lo decide este documento.** Esta medición es el dato que pide la puerta de escalado de la
+skill `qvac-model-selection`; si escalar a `QWEN3_1_7B_INST_Q4`, ajustar el prompt, o aceptar la línea base para
+el demo es una decisión aparte que corresponde a una persona, y debe registrarse en `DECISIONS.md` si se toma. No se hizo
+ningún cambio de modelo, cuantización o prompt para producir este número ni en respuesta a él.
 
-### 2026-09-10 initial escalation attempt — historical blocker, subsequently resolved
+### Intento inicial de escalado, 2026-09-10 — bloqueador histórico, resuelto posteriormente
 
-`QvacObservationExtractionService` gained an optional `modelDescriptor` config field so a caller
-can select `QWEN3_1_7B_INST_Q4` (a real, `@qvac/sdk`-exported registry descriptor, verified against
-the installed SDK, `expectedSize: 1,056,782,912`) instead of the default, through the same
-`loadModel` "load from descriptor" overload the default already uses. `scripts/qvac-corpus-eval.ts`
-exposes this as `CIB_QVAC_CORPUS_MODEL=1.7b`. No new runtime, prompt, or contract was introduced;
-inference still goes through `@qvac/sdk` exclusively.
+`QvacObservationExtractionService` obtuvo un campo de configuración opcional `modelDescriptor` para que quien la invoque
+pueda seleccionar `QWEN3_1_7B_INST_Q4` (un descriptor de registro real, exportado por `@qvac/sdk`, verificado contra
+el SDK instalado, `expectedSize: 1,056,782,912`) en lugar del valor por defecto, mediante la misma sobrecarga
+"cargar desde descriptor" de `loadModel` que ya usa el valor por defecto. `scripts/qvac-corpus-eval.ts`
+expone esto como `CIB_QVAC_CORPUS_MODEL=1.7b`. No se introdujo ningún runtime, prompt ni contrato nuevo;
+la inferencia sigue pasando exclusivamente por `@qvac/sdk`.
 
-**This initial comparison run did not complete.** `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval`
-triggered the registry download (the model was not yet cached locally), and that download stalled:
-`~/.qvac/models/f7cce66406dee646_Qwen3-1.7B-Q4_0.gguf` sat at 0 bytes for 15+ minutes with the QVAC
-worker processes at near-zero CPU (0.05–0.85s of CPU time total), unlike the earlier successful
-0.6B download. `QWEN3_1_7B_INST_Q4`'s `src` resolves through the SDK's Hyperdrive/Corestore-based
-peer-to-peer registry transport (`~/.qvac/registry-corestore/`); the stall is consistent with that
-P2P transport failing to find peers for this blob in the current network environment, not with a
-code defect — the 0.6B model, fetched over the same registry mechanism on a different occasion,
-downloaded to its full 382,156,480 bytes without issue. The stalled processes were terminated
-rather than left running indefinitely.
+**Esta primera ejecución comparativa no se completó.** `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval`
+disparó la descarga del registro (el modelo aún no estaba en caché local), y esa descarga se estancó:
+`~/.qvac/models/f7cce66406dee646_Qwen3-1.7B-Q4_0.gguf` se quedó en 0 bytes durante más de 15 minutos con los procesos
+del worker de QVAC en CPU casi nula (0.05–0.85s de tiempo de CPU en total), a diferencia de la
+descarga exitosa anterior del modelo 0.6B. El `src` de `QWEN3_1_7B_INST_Q4` se resuelve mediante el transporte de
+registro entre pares del SDK basado en Hyperdrive/Corestore (`~/.qvac/registry-corestore/`); el estancamiento es coherente con que
+ese transporte P2P no encontrara pares para este blob en el entorno de red actual, y no con un
+defecto de código — el modelo 0.6B, obtenido mediante el mismo mecanismo de registro en otra ocasión,
+se descargó sin problemas hasta sus 382,156,480 bytes completos. Los procesos estancados se terminaron
+en lugar de dejarlos corriendo indefinidamente.
 
-**No 1.7B measurement existed from this attempt.** This is retained as historical provenance for
-the acquisition failure. It was later resolved, as recorded in the fast-comparison section below;
-the options considered at the time were:
+**No existió ninguna medición del 1.7B a partir de este intento.** Esto se conserva como procedencia histórica de
+el fallo de adquisición. Se resolvió más tarde, como se registra en la sección de comparación rápida más abajo;
+las opciones consideradas en su momento fueron:
 
-1. Retry `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval` on a machine/network without the
-   restriction that appears to be blocking the P2P registry transport.
-2. Obtain the `Qwen3-1.7B-Q4_0.gguf` file through another channel and point
-   `CIB_QVAC_MODEL_PATH` (which the runner already honors and takes priority over
-   `CIB_QVAC_CORPUS_MODEL`) at the local file.
-3. Accept the measured 0.6B baseline for the demo given the timeline, and revisit escalation later.
+1. Reintentar `CIB_QVAC_CORPUS_MODEL=1.7b npm run corpus:eval` en una máquina/red sin
+   la restricción que parece estar bloqueando el transporte P2P del registro.
+2. Obtener el archivo `Qwen3-1.7B-Q4_0.gguf` por otro canal y apuntar
+   `CIB_QVAC_MODEL_PATH` (que el runner ya respeta y prioriza sobre
+   `CIB_QVAC_CORPUS_MODEL`) al archivo local.
+3. Aceptar la línea base medida del 0.6B para el demo dado el cronograma, y revisar el escalado más adelante.
 
-### 2026-09-10 fast comparison resolved — 4B materially improves quality, no production switch
+### Comparación rápida resuelta el 2026-09-10 — el 4B mejora materialmente la calidad, sin cambio de producción
 
-The previously blocked 1.7B acquisition later completed, and one additional model was evaluated:
-the installed SDK 0.19.0 export `QWEN3_4B_INST_Q4_K_M`. Its registry descriptor names
-`Qwen3-4B-Q4_K_M.gguf`, Q4_K_M, 2,497,280,256 bytes, and the existing
-`llamacpp-completion` engine. No other model was tried.
+La adquisición del 1.7B previamente bloqueada se completó más tarde, y se evaluó un modelo adicional:
+la exportación `QWEN3_4B_INST_Q4_K_M` del SDK instalado 0.19.0. Su descriptor de registro nombra
+`Qwen3-4B-Q4_K_M.gguf`, Q4_K_M, 2,497,280,256 bytes, y usa el mismo motor
+`llamacpp-completion` ya existente. No se probó ningún otro modelo.
 
-| Candidate              | Corpus field accuracy | Full-pass |   Registry size | Peak RAM | Language result    |   Latency p50 / p95 / max |
-| ---------------------- | --------------------: | --------: | --------------: | -------- | ------------------ | ------------------------: |
-| `QWEN3_600M_INST_Q4`   |                 49.8% |      0/30 |   382,156,480 B | TBD      | EN 53.9%; ES 39.0% |  2,312 / 6,249 / 7,185 ms |
-| `QWEN3_1_7B_INST_Q4`   |                 49.1% |      0/30 | 1,056,782,912 B | TBD      | EN 53.8%; ES 35.6% |  2,241 / 2,819 / 3,238 ms |
-| `QWEN3_4B_INST_Q4_K_M` |             **63.4%** |  **3/30** | 2,497,280,256 B | TBD      | EN 62.4%; ES 66.2% | 3,383 / 6,744 / 17,013 ms |
+| Candidato              | Precisión de campo del corpus | Aprobación total | Tamaño de registro | RAM pico | Resultado por idioma |  Latencia p50 / p95 / max |
+| ---------------------- | ----------------------------: | ---------------: | -----------------: | -------- | -------------------- | ------------------------: |
+| `QWEN3_600M_INST_Q4`   |                         49.8% |             0/30 |      382,156,480 B | TBD      | EN 53.9%; ES 39.0%   |  2,312 / 6,249 / 7,185 ms |
+| `QWEN3_1_7B_INST_Q4`   |                         49.1% |             0/30 |    1,056,782,912 B | TBD      | EN 53.8%; ES 35.6%   |  2,241 / 2,819 / 3,238 ms |
+| `QWEN3_4B_INST_Q4_K_M` |                     **63.4%** |         **3/30** |    2,497,280,256 B | TBD      | EN 62.4%; ES 66.2%   | 3,383 / 6,744 / 17,013 ms |
 
-The acceptance criterion remains the documented extraction cases passing while uncertainty and
-unknowns are preserved. None of the candidates meets it. The 4B result is nevertheless materially
-better than 1.7B (+14.2 percentage points overall and three full-pass cases), so the conditional
-instruction to close exploration does not apply. This comparison alone does **not** justify a
-production switch: the 4B model still fails 27/30 cases, fabricates 42 values, never emits
-`Uncertain`, and has materially higher load and latency costs. The production default therefore
-remains `QWEN3_600M_INST_Q4`; fallback and lifecycle are unchanged. Full metrics and per-case
-failures are recorded in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) and the three separate
-JSON reports under `docs/qvac-eval-runs/`.
+El criterio de aceptación sigue siendo que pasen los casos de extracción documentados, preservando a la vez
+la incertidumbre y los valores desconocidos. Ninguno de los candidatos lo cumple. El resultado del 4B es, no obstante,
+materialmente mejor que el del 1.7B (+14.2 puntos porcentuales en general y tres casos con aprobación total), así que la
+instrucción condicional de cerrar la exploración no aplica. Esta comparación por sí sola **no**
+justifica un cambio de producción: el modelo 4B sigue fallando en 27/30 casos, fabrica 42 valores,
+nunca emite `Uncertain`, y tiene costos de carga y latencia materialmente más altos. El valor por defecto de producción por tanto
+sigue siendo `QWEN3_600M_INST_Q4`; el respaldo y el ciclo de vida no cambian. Las métricas completas y las fallas
+por caso están registradas en [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md) y en los tres
+reportes JSON separados bajo `docs/qvac-eval-runs/`.
 
-### 2026-09-10 — `QWEN3_4B_INST_Q4_K_M` approved for the demo; production default unchanged
+### 2026-09-10 — `QWEN3_4B_INST_Q4_K_M` aprobado para el demo; el valor por defecto de producción no cambia
 
-A later corpus run, `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, scored
-`QWEN3_4B_INST_Q4_K_M` again on the same `extraction-corpus-v1` and measured **82.6% overall field
-accuracy (238/288 fields), 7/30 full-pass cases, EN 84.7% (182/215), ES 76.7% (56/73), adversarial
-82.4% (61/74), and 11 fabricated values** — materially higher than both the 63.4% recorded for this
-model in the comparison above and the 43.8–49.8% recorded for `QWEN3_600M_INST_Q4` across its own
-runs. A human reviewed this result and approved `QWEN3_4B_INST_Q4_K_M` as the recommended,
-documented model configuration for the upcoming demo.
+Una ejecución posterior del corpus, `docs/qvac-eval-runs/4b-2026-09-10T18-16-39-837Z.json`, puntuó
+`QWEN3_4B_INST_Q4_K_M` de nuevo sobre el mismo `extraction-corpus-v1` y midió **82.6% de precisión general
+de campo (238/288 campos), 7/30 casos con aprobación total, EN 84.7% (182/215), ES 76.7% (56/73), adversarial
+82.4% (61/74), y 11 valores fabricados** — materialmente más alto que tanto el 63.4% registrado para este
+modelo en la comparación de arriba como el 43.8–49.8% registrado para `QWEN3_600M_INST_Q4` a lo largo de sus propias
+ejecuciones. Una persona revisó este resultado y aprobó `QWEN3_4B_INST_Q4_K_M` como la configuración de modelo
+recomendada y documentada para el demo próximo.
 
-**This is a demo-configuration decision, not a change to the production default.** The global
-default read when `CIB_QVAC_MODEL` is unset — used by `npm run dev`, `npm test`, and
-`npm run corpus:eval`'s own default — remains `QWEN3_600M_INST_Q4`, unchanged. `CIB_QVAC_MODEL=4b`
-opts a run into the demo model explicitly; `CIB_QVAC_MODEL=600m` selects the documented fast
-fallback the same way. See decision 18 in [DECISIONS.md](DECISIONS.md) and the
-[README](../README.md#selecting-the-demo-model) for the mechanism. `QWEN3_4B_INST_Q4_K_M` still
-does not meet the stated quality bar — 23 of 30 cases fail and `Uncertain` is still never emitted —
-so this remains an approved demo configuration, not a claim that escalation is complete or that the
-quality bar in [TESTING.md](TESTING.md) is met. No prompt, schema, or model-tuning change was made
-to produce this number or in response to it.
+**Esta es una decisión de configuración para el demo, no un cambio del valor por defecto de producción.** El valor por defecto
+global que se lee cuando `CIB_QVAC_MODEL` no está definido —usado por `npm run dev`, `npm test`, y el
+valor por defecto del propio `npm run corpus:eval`— sigue siendo `QWEN3_600M_INST_Q4`, sin cambios. `CIB_QVAC_MODEL=4b`
+hace que una ejecución use explícitamente el modelo del demo; `CIB_QVAC_MODEL=600m` selecciona el respaldo rápido documentado
+de la misma manera. Ver la decisión 18 en [DECISIONS.md](DECISIONS.md) y el
+[README](../README.md#modelo-recomendado-para-la-demo) para conocer el mecanismo. `QWEN3_4B_INST_Q4_K_M` aún
+no cumple con el estándar de calidad declarado —23 de 30 casos fallan y `Uncertain` todavía nunca se emite—
+así que esto sigue siendo una configuración de demo aprobada, no una afirmación de que el escalado esté completo o de que el
+estándar de calidad de [TESTING.md](TESTING.md) se cumpla. No se hizo ningún cambio de prompt, esquema, o ajuste
+de modelo para producir este número ni en respuesta a él.
 
-## Capability 2 — Speech to text (implemented, push-to-talk)
+## Capacidad 2 — Voz a texto (implementada, pulsar para hablar)
 
-Voice is the natural capture mode for someone walking a hospital corridor. `SpeechToTextPort`
-(`src/application/ports/platform.ts`) now has a real adapter, `QvacSpeechToTextService`
-(`src/infrastructure/qvac/qvac-speech-to-text.ts`), plus a `DevelopmentMockSpeechToTextService`
-mirroring the extraction capability's mock/production split. `EvidenceSource` already included
-`Voice`; this capability only produces a transcript for the _existing_ text input — it does not
-change what gets saved or how (see "What this does not change" below).
+La voz es el modo natural de captura para alguien que camina por un pasillo de hospital. `SpeechToTextPort`
+(`src/application/ports/platform.ts`) ahora tiene un adaptador real, `QvacSpeechToTextService`
+(`src/infrastructure/qvac/qvac-speech-to-text.ts`), más un `DevelopmentMockSpeechToTextService`
+que refleja la división mock/producción de la capacidad de extracción. `EvidenceSource` ya incluía
+`Voice`; esta capacidad solo produce una transcripción para el campo de texto _existente_ — no
+cambia qué se guarda ni cómo (ver "Qué no cambia esto" más abajo).
 
-|                    |                                                                                                                                                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Purpose**        | Audio to text, placed into the existing text input for the observer to review/edit — never auto-submitted, and feeding the same extraction pipeline unchanged                                                   |
-| **Model type**     | Whisper-family ASR                                                                                                                                                                                              |
-| **QVAC plugin**    | `@qvac/sdk/whispercpp-transcription/plugin`, enabled in `qvac.config.json`                                                                                                                                      |
-| **SDK command**    | `transcribe({ modelId, audioChunk, prompt?, metadata? })`, verified in `node_modules/@qvac/inference/dist/api/transcribe.d.ts`                                                                                  |
-| **Selected model** | `WHISPER_TINY_Q8_0` (`ggml-tiny-q8_0.bin`) — see "Why `WHISPER_TINY_Q8_0`" below                                                                                                                                |
-| **Size**           | 43,537,433 B ≈ 42 MiB                                                                                                                                                                                           |
-| **Languages**      | `language: 'auto'`, `translate: false` — auto-detects between the observer's two working languages (Spanish, English) and never translates, so the transcript stays in the words actually spoken                |
-| **Fallback**       | Text capture, which already works and stays the primary path; a transcription failure surfaces an error and leaves the text input exactly as it was                                                             |
-| **Lifecycle**      | Loaded lazily on the first `transcribe()` call in a session (no separate "initialize voice" action — push-to-talk is one user action, not two), unloaded on application disposal alongside the completion model |
+|                         |                                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**           | Audio a texto, colocado en el campo de texto existente para que el observador lo revise/edite — nunca se envía automáticamente, y alimenta el mismo pipeline de extracción sin cambios                                                                                       |
+| **Tipo de modelo**      | ASR de la familia Whisper                                                                                                                                                                                                                                                    |
+| **Plugin de QVAC**      | `@qvac/sdk/whispercpp-transcription/plugin`, habilitado en `qvac.config.json`                                                                                                                                                                                                |
+| **Comando del SDK**     | `transcribe({ modelId, audioChunk, prompt?, metadata? })`, verificado en `node_modules/@qvac/inference/dist/api/transcribe.d.ts`                                                                                                                                             |
+| **Modelo seleccionado** | `WHISPER_TINY_Q8_0` (`ggml-tiny-q8_0.bin`) — ver "Por qué `WHISPER_TINY_Q8_0`" más abajo                                                                                                                                                                                     |
+| **Tamaño**              | 43,537,433 B ≈ 42 MiB                                                                                                                                                                                                                                                        |
+| **Idiomas**             | `language: 'auto'`, `translate: false` — detecta automáticamente entre los dos idiomas de trabajo del observador (español, inglés) y nunca traduce, de modo que la transcripción se mantiene en las palabras realmente dichas                                                |
+| **Respaldo (fallback)** | Captura de texto, que ya funciona y sigue siendo la vía principal; un fallo de transcripción muestra un error y deja el campo de texto exactamente como estaba                                                                                                               |
+| **Ciclo de vida**       | Cargado de forma diferida en la primera llamada a `transcribe()` de una sesión (sin una acción separada de "inicializar voz" — pulsar para hablar es una sola acción del usuario, no dos), descargado al liberar recursos de la aplicación junto con el modelo de completado |
 
-### Why `WHISPER_TINY_Q8_0`
+### Por qué `WHISPER_TINY_Q8_0`
 
-The smallest **multilingual** candidate in the table below. `WHISPER_SPANISH_TINY_Q8_0` was not
-selected: this product's own positioning is bilingual capture ("Spanish and English input
-required" — see Capability 1 above), and a Spanish-only model would silently fail or mistranscribe
-an English observation. Multilingual auto-detection is the smaller compromise.
+El candidato **multilingüe** más pequeño de la tabla de abajo. No se seleccionó `WHISPER_SPANISH_TINY_Q8_0`:
+el propio posicionamiento de este producto es la captura bilingüe ("se requiere entrada en español e inglés" —
+ver la Capacidad 1 arriba), y un modelo solo en español fallaría silenciosamente o transcribiría mal
+una observación en inglés. La detección automática multilingüe es el compromiso menor.
 
-| Constant                    | Artifact                      | Size                    | Notes                                          |
-| --------------------------- | ----------------------------- | ----------------------- | ---------------------------------------------- |
-| `WHISPER_SPANISH_TINY_Q8_0` | `es-tiny-ggml-model-q8_0.bin` | 43,537,433 B ≈ 42 MiB   | Spanish-only; not selected (bilingual product) |
-| **`WHISPER_TINY_Q8_0`**     | `ggml-tiny-q8_0.bin`          | 43,537,433 B ≈ 42 MiB   | **Selected** — multilingual tiny               |
-| `WHISPER_BASE_Q8_0`         | `ggml-base-q8_0.bin`          | 81,768,585 B ≈ 78 MiB   | Escalation candidate, not measured             |
-| `WHISPER_SMALL_Q8_0`        | small q8_0                    | 264,464,607 B ≈ 252 MiB | Only with measured evidence                    |
+| Constante                   | Artefacto                     | Tamaño                  | Notas                                             |
+| --------------------------- | ----------------------------- | ----------------------- | ------------------------------------------------- |
+| `WHISPER_SPANISH_TINY_Q8_0` | `es-tiny-ggml-model-q8_0.bin` | 43,537,433 B ≈ 42 MiB   | Solo español; no seleccionado (producto bilingüe) |
+| **`WHISPER_TINY_Q8_0`**     | `ggml-tiny-q8_0.bin`          | 43,537,433 B ≈ 42 MiB   | **Seleccionado** — tiny multilingüe               |
+| `WHISPER_BASE_Q8_0`         | `ggml-base-q8_0.bin`          | 81,768,585 B ≈ 78 MiB   | Candidato de escalado, no medido                  |
+| `WHISPER_SMALL_Q8_0`        | small q8_0                    | 264,464,607 B ≈ 252 MiB | Solo con evidencia medida                         |
 
-Both `WHISPER_TINY_Q8_0` and `WHISPER_SPANISH_TINY_Q8_0` are ≈42 MiB, a rounding error next to the
-365 MiB completion model — the size difference did not drive this choice; multilingual coverage
-did.
+Tanto `WHISPER_TINY_Q8_0` como `WHISPER_SPANISH_TINY_Q8_0` son de ≈42 MiB, un margen de error frente al
+modelo de completado de 365 MiB — la diferencia de tamaño no impulsó esta elección; la cobertura
+multilingüe sí.
 
-### What this does not change
+### Qué no cambia esto
 
-- The extraction model, prompt, and schema (Capability 1) are untouched — a transcript is just
-  text, indistinguishable to the extraction pipeline from anything typed.
-- Nothing is auto-submitted. The transcript lands in the same `<textarea>` the observer already
-  reviews and edits before pressing Send.
-- No raw audio is persisted. `src/main/voice-transcription.ts` writes the recorded bytes to a
-  single-use OS temp directory only for the duration of the `transcribe()` call and always removes
-  it afterward, success or failure. `docs/PRIVACY_OFFLINE.md`'s "Audio artifacts" row stays
-  **PLANNED** (not implemented) because of this — there is no `local_artifact_uri` to persist yet.
+- El modelo de extracción, el prompt y el esquema (Capacidad 1) permanecen intactos — una transcripción es solo
+  texto, indistinguible para el pipeline de extracción de cualquier cosa escrita.
+- Nada se envía automáticamente. La transcripción llega al mismo `<textarea>` que el observador ya
+  revisa y edita antes de pulsar Enviar.
+- No se persiste audio crudo. `src/main/voice-transcription.ts` escribe los bytes grabados en un
+  directorio temporal del sistema operativo de un solo uso solo durante la duración de la llamada a `transcribe()`, y siempre lo elimina
+  después, con éxito o con fallo. La fila "Artefactos de audio" de `docs/PRIVACY_OFFLINE.md` sigue marcada como
+  **PLANIFICADO** (no implementado) por esta razón — todavía no hay ningún `local_artifact_uri` que persistir.
 
-### Open questions — **TBD**, not resolved by this implementation
+### Preguntas abiertas — **por determinar**, no resueltas por esta implementación
 
-- **RAM with two models resident.** `docs/QVAC_ARCHITECTURE.md`'s "one model at a time... a second
-  resident model needs a measured RAM figure" is not satisfied here: if voice is used in a session
-  where the completion model is already loaded, both are resident until disposal. Lazy-load and
-  eventual disposal bound this, but no measurement exists. Do not add a second always-resident
-  model without measuring this first.
-- **Quality bar.** No word-error-rate measurement exists against hospital vocabulary
-  (manufacturer names, modality words), and none is claimed. `npm run qvac:voice-smoke` (see
-  README) proves the pipeline runs end to end on real hardware; it does not prove transcription
-  accuracy. Build a small held-out audio set before making any WER claim.
-- **Disk footprint.** ~42 MiB for the model artifact, cached the same way as the completion model
-  (see "Model lifecycle policy" below); temp WAV files are transient (typically well under 1 MiB
-  for a short dictated observation) and deleted immediately after each transcription.
+- **RAM con dos modelos residentes.** Lo que dice "Runtime y worker" en `docs/QVAC_ARCHITECTURE.md`
+  —"un modelo a la vez... un segundo modelo residente necesita una cifra de RAM medida"— no se satisface aquí: si la voz se usa en una sesión
+  donde el modelo de completado ya está cargado, ambos permanecen residentes hasta la liberación de recursos. La carga diferida y la
+  eventual liberación acotan esto, pero no existe ninguna medición. No agregue un segundo modelo siempre residente
+  sin medir esto primero.
+- **Estándar de calidad.** No existe ninguna medición de tasa de error de palabras contra vocabulario hospitalario
+  (nombres de fabricantes, palabras de modalidad), y no se afirma ninguna. `npm run qvac:voice-smoke` (ver
+  el README) demuestra que el pipeline se ejecuta de extremo a extremo en hardware real; no demuestra la precisión de
+  la transcripción. Construya un pequeño conjunto de audio reservado antes de hacer cualquier afirmación sobre WER.
+- **Espacio en disco.** ~42 MiB para el artefacto del modelo, almacenado en caché de la misma manera que el modelo de completado
+  (ver "Política de ciclo de vida del modelo" más abajo); los archivos WAV temporales son transitorios (típicamente muy por debajo de 1 MiB
+  para una observación dictada breve) y se eliminan inmediatamente después de cada transcripción.
 
-## Capabilities deliberately not adopted
+## Capacidades deliberadamente no adoptadas
 
-Each is available in QVAC and each is currently a **no**. Recorded so the question is not
-reopened without new information.
+Cada una está disponible en QVAC y cada una es actualmente un **no**. Se registran para que la pregunta no
+se reabra sin información nueva.
 
-| Capability                       | Plugin               | Why not now                                                                                                                                       | What would change it                                                     |
-| -------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Embeddings                       | `llamacpp-embedding` | Deduplication is currently deterministic and explainable. Embedding similarity would make it a black box and would still need a human review step | Deterministic matching demonstrably failing on real reviewed data        |
-| RAG                              | uses embeddings      | There is no corpus to retrieve from. The whole database is small and structured, and SQL answers the questions                                    | A large unstructured document corpus, for example service manuals        |
-| OCR                              | `ggml-ocr`           | `Photo` evidence is typed but not implemented. Reading a device label is plausible but nothing captures photos yet                                | Photo capture shipping, plus a defined use such as reading serial plates |
-| Multimodal vision                | vision models        | Same as OCR, and far heavier                                                                                                                      | A demonstrated need OCR cannot meet                                      |
-| Translation                      | `nmtcpp-translation` | The extraction model is multilingual. Translating before extraction adds a step and loses the speaker's exact words, which the schema requires    | Languages the completion model handles poorly                            |
-| Text to speech                   | `tts-ggml`           | Nothing in the workflow reads text aloud                                                                                                          | An accessibility or hands-free requirement                               |
-| Diffusion, audio generation, VLA | various              | No conceivable use here                                                                                                                           | —                                                                        |
+| Capacidad                          | Plugin               | Por qué no ahora                                                                                                                                                          | Qué lo cambiaría                                                                       |
+| ---------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Embeddings                         | `llamacpp-embedding` | La deduplicación es actualmente determinista y explicable. La similitud por embeddings la convertiría en una caja negra y seguiría necesitando un paso de revisión humana | Que el emparejamiento determinista falle demostrablemente sobre datos reales revisados |
+| RAG                                | usa embeddings       | No hay ningún corpus del que recuperar. Toda la base de datos es pequeña y estructurada, y SQL responde las preguntas                                                     | Un corpus grande de documentos no estructurados, por ejemplo manuales de servicio      |
+| OCR                                | `ggml-ocr`           | La evidencia `Photo` está tipada pero no implementada. Leer la etiqueta de un equipo es plausible pero nada captura fotos todavía                                         | Que la captura de fotos se lance, más un uso definido como leer placas de serie        |
+| Visión multimodal                  | modelos de visión    | Igual que OCR, y mucho más pesado                                                                                                                                         | Una necesidad demostrada que OCR no pueda cubrir                                       |
+| Traducción                         | `nmtcpp-translation` | El modelo de extracción es multilingüe. Traducir antes de la extracción agrega un paso y pierde las palabras exactas del hablante, que el esquema requiere                | Idiomas que el modelo de completado maneje mal                                         |
+| Texto a voz                        | `tts-ggml`           | Nada en el flujo lee texto en voz alta                                                                                                                                    | Un requisito de accesibilidad o manos libres                                           |
+| Difusión, generación de audio, VLA | varios               | Ningún uso concebible aquí                                                                                                                                                | —                                                                                      |
 
-Adding any plugin to `qvac.config.json` adds runtime weight to every build. The plugin list is
-the bundle budget in [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md).
+Agregar cualquier plugin a `qvac.config.json` agrega peso de runtime a cada build. La lista de plugins es
+el presupuesto de bundle en [PERFORMANCE_BUDGETS.md](PERFORMANCE_BUDGETS.md).
 
-## Model lifecycle policy
+## Política de ciclo de vida del modelo
 
-- **Acquisition.** Registry download on first initialization, or a pre-provisioned local file
-  via `CIB_QVAC_MODEL_PATH`. Field deployment should prefer provisioning; follow the
-  [README provisioning procedure](../README.md#provisioning-the-model-on-another-machine). See
-  [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) for the offline posture and its validation status.
-- **Load.** Explicit, user-initiated, with visible progress.
-- **Reuse.** One load per session. Loading per request is a defect.
-- **Residency.** One model at a time today. Two resident models need a measured peak RAM figure
-  before being allowed.
-- **Unload.** On disposal, wired to the application quit path.
-- **Versioning.** The model name and the schema version are both stored context for any saved
-  observation, so a future change in extraction behaviour is traceable.
+- **Adquisición.** Descarga del registro en la primera inicialización, o un archivo local preaprovisionado
+  mediante `CIB_QVAC_MODEL_PATH`. El despliegue en campo debería preferir el aprovisionamiento; siga el
+  [procedimiento de aprovisionamiento del README](../README.md#aprovisionar-un-modelo-en-otra-máquina). Ver
+  [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) para la postura offline y su estado de validación.
+- **Carga.** Explícita, iniciada por el usuario, con progreso visible.
+- **Reutilización.** Una carga por sesión. Cargar por cada solicitud es un defecto.
+- **Residencia.** Un modelo a la vez, por ahora. Dos modelos residentes necesitan una cifra de RAM pico medida
+  antes de permitirse.
+- **Descarga.** Al liberar recursos, conectada a la ruta de cierre de la aplicación.
+- **Versionado.** Tanto el nombre del modelo como la versión del esquema se almacenan como contexto de cada
+  observación guardada, de modo que un futuro cambio en el comportamiento de extracción sea rastreable.
 
-## Before changing any of this
+## Antes de cambiar cualquiera de estas cosas
 
-Use the `qvac-model-selection` skill. It requires a stated quality bar, candidates from the
-real registry, and measurements before an escalation.
+Use la skill `qvac-model-selection`. Requiere un estándar de calidad declarado, candidatos del
+registro real, y mediciones antes de un escalado.

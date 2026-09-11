@@ -1,102 +1,102 @@
-# QVAC compliance
+# Cumplimiento de QVAC
 
-## Integration inventory
+## Inventario de integración
 
-| Requirement              | Implementation                                                                                                                                                                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| SDK                      | `@qvac/sdk` 0.19.0, imported directly only under `src/infrastructure/qvac/`: `qvac-observation-extraction.ts` (text) and `qvac-speech-to-text.ts` (voice)                                                                                        |
-| Runtime modules          | `@qvac/sdk/llamacpp-completion/plugin` (text) and `@qvac/sdk/whispercpp-transcription/plugin` (voice), both enabled in `qvac.config.json`                                                                                                        |
-| Execution location       | On-device in the QVAC llama.cpp completion worker (text) and whisper.cpp transcription worker (voice)                                                                                                                                            |
-| Default text model       | SDK descriptor `QWEN3_600M_INST_Q4` / `Qwen3-0.6B-Q4_0.gguf`                                                                                                                                                                                     |
-| Default voice model      | SDK descriptor `WHISPER_TINY_Q8_0` / `ggml-tiny-q8_0.bin`                                                                                                                                                                                        |
-| Alternate model          | Local file supplied through `CIB_QVAC_MODEL_PATH` (text) or `CIB_QVAC_VOICE_MODEL_PATH` (voice)                                                                                                                                                  |
-| Structured output        | Text: QVAC `responseFormat: json_schema`, generated from Zod 4 with `z.toJSONSchema`, followed by local Zod validation. Voice: plain transcript text placed into the existing text input for human review — no structured-output claim for voice |
-| Network during inference | None required after each model is present and loaded                                                                                                                                                                                             |
-| Initial network use      | The SDK registry may download either model to its local cache on that model's first initialization                                                                                                                                               |
-| Cloud AI                 | None configured or called                                                                                                                                                                                                                        |
-| Fallback                 | None in QVAC mode; initialization/inference errors are surfaced for both capabilities                                                                                                                                                            |
+| Requisito                   | Implementación                                                                                                                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SDK                         | `@qvac/sdk` 0.19.0, importado directamente solo bajo `src/infrastructure/qvac/`: `qvac-observation-extraction.ts` (texto) y `qvac-speech-to-text.ts` (voz)                                                                                                               |
+| Módulos de runtime          | `@qvac/sdk/llamacpp-completion/plugin` (texto) y `@qvac/sdk/whispercpp-transcription/plugin` (voz), ambos habilitados en `qvac.config.json`                                                                                                                              |
+| Lugar de ejecución          | En el dispositivo, en el worker de completado llama.cpp de QVAC (texto) y en el worker de transcripción whisper.cpp (voz)                                                                                                                                                |
+| Modelo de texto por defecto | Descriptor del SDK `QWEN3_600M_INST_Q4` / `Qwen3-0.6B-Q4_0.gguf`                                                                                                                                                                                                         |
+| Modelo de voz por defecto   | Descriptor del SDK `WHISPER_TINY_Q8_0` / `ggml-tiny-q8_0.bin`                                                                                                                                                                                                            |
+| Modelo alternativo          | Archivo local suministrado mediante `CIB_QVAC_MODEL_PATH` (texto) o `CIB_QVAC_VOICE_MODEL_PATH` (voz)                                                                                                                                                                    |
+| Salida estructurada         | Texto: `responseFormat: json_schema` de QVAC, generado desde Zod 4 con `z.toJSONSchema`, seguido de validación local con Zod. Voz: texto de transcripción plano colocado en el campo de texto existente para revisión humana — no se afirma salida estructurada para voz |
+| Red durante la inferencia   | Ninguna requerida una vez que cada modelo está presente y cargado                                                                                                                                                                                                        |
+| Uso de red inicial          | El registro del SDK puede descargar cualquiera de los dos modelos a su caché local en la primera inicialización de ese modelo                                                                                                                                            |
+| IA en la nube               | Ninguna configurada ni invocada                                                                                                                                                                                                                                          |
+| Respaldo (fallback)         | Ninguno en modo QVAC; los errores de inicialización/inferencia se muestran para ambas capacidades                                                                                                                                                                        |
 
-## Observable lifecycle
+## Ciclo de vida observable
 
-Model initialization is explicit. The renderer displays:
+La inicialización del modelo es explícita. El renderer muestra:
 
-- engine (`QVAC` or `Development Mock`);
-- execution (`On-device` or deterministic local rules);
-- selected model;
-- whether inference needs network access;
-- model-not-loaded, downloading, loading, ready, processing, or error state;
-- download/load detail and progress when QVAC supplies it.
+- motor (`QVAC` o `Development Mock`);
+- ejecución (`On-device` o reglas locales deterministas);
+- modelo seleccionado;
+- si la inferencia necesita acceso a la red;
+- estado model-not-loaded, downloading, loading, ready, processing, o error;
+- detalle y progreso de descarga/carga cuando QVAC lo proporciona.
 
-The real text adapter performs this sequence:
+El adaptador real de texto realiza esta secuencia:
 
-1. `heartbeat()` verifies and starts the local QVAC runtime.
-2. `loadModel(...)` loads a local model path or the official default descriptor.
-3. `getLoadedModelInfo(...)` verifies that the completion handler exists.
-4. `completion(...)` runs with the observation system/user messages and a strict JSON schema.
-5. `run.events` is drained; raw generated tokens are not logged.
-6. `run.final.contentText` is parsed and validated by `ObservationExtractionSchema`.
-7. `unloadModel(...)` releases the model during disposal.
+1. `heartbeat()` verifica e inicia el runtime local de QVAC.
+2. `loadModel(...)` carga una ruta de modelo local o el descriptor oficial por defecto.
+3. `getLoadedModelInfo(...)` verifica que exista el handler de completado.
+4. `completion(...)` se ejecuta con los mensajes de sistema/usuario de la observación y un esquema JSON estricto.
+5. `run.events` se drena; los tokens crudos generados no se registran en logs.
+6. `run.final.contentText` se parsea y valida con `ObservationExtractionSchema`.
+7. `unloadModel(...)` libera el modelo durante la liberación de recursos.
 
-The real voice adapter (`QvacSpeechToTextService`) performs the equivalent sequence, lazily on
-first use rather than on an explicit user action:
+El adaptador real de voz (`QvacSpeechToTextService`) realiza la secuencia equivalente, de forma diferida en el
+primer uso en lugar de en una acción explícita del usuario:
 
-1. `heartbeat()` verifies and starts the local QVAC runtime (idempotent alongside the text
-   adapter's own call — see docs/QVAC_ARCHITECTURE.md's "Recommendation, not yet implemented").
-2. `loadModel(...)` loads a local voice model path or `WHISPER_TINY_Q8_0`, with
-   `language: 'auto'` and `translate: false`.
-3. `getLoadedModelInfo(...)` verifies that a transcription handler exists.
-4. `transcribe({ modelId, audioChunk })` runs against a local WAV file path — never a raw
-   in-memory buffer sent anywhere else, and never streamed off-device.
-5. The returned text is trimmed and handed back; nothing is drained/logged beyond the adapter's
-   own state-transition messages (never the transcript itself).
-6. `unloadModel(...)` releases the model during application disposal.
+1. `heartbeat()` verifica e inicia el runtime local de QVAC (idempotente junto a la propia
+   llamada del adaptador de texto — ver "Recomendación, aún no implementada" en docs/QVAC_ARCHITECTURE.md).
+2. `loadModel(...)` carga una ruta de modelo de voz local o `WHISPER_TINY_Q8_0`, con
+   `language: 'auto'` y `translate: false`.
+3. `getLoadedModelInfo(...)` verifica que exista un handler de transcripción.
+4. `transcribe({ modelId, audioChunk })` se ejecuta contra una ruta de archivo WAV local — nunca un
+   búfer crudo en memoria enviado a ningún otro lugar, y nunca transmitido fuera del dispositivo.
+5. El texto devuelto se recorta y se entrega; nada se drena/registra en logs más allá de los propios
+   mensajes de transición de estado del adaptador (nunca la transcripción en sí).
+6. `unloadModel(...)` libera el modelo durante la liberación de recursos de la aplicación.
 
-Recorded audio itself never reaches this adapter as a persisted artifact: `src/main/voice-transcription.ts` writes it to a single-use OS temp file for the duration of step 4 only and
-deletes it in a `finally` block regardless of outcome.
+El audio grabado en sí nunca llega a este adaptador como un artefacto persistido: `src/main/voice-transcription.ts` lo escribe en un archivo temporal del sistema operativo de un solo uso solo durante el paso 4 y
+lo elimina en un bloque `finally` sin importar el resultado.
 
-## Verification
+## Verificación
 
-Run:
+Ejecute:
 
 ```powershell
 npm run qvac:smoke
 ```
 
-This script imports the production QVAC adapter—not the mock—and fails unless it observes:
+Este script importa el adaptador de QVAC de producción —no el mock— y falla a menos que observe:
 
-- QVAC runtime initialization;
-- model load;
-- a local completion;
-- valid structured output containing at least two equipment groups.
+- inicialización del runtime de QVAC;
+- carga del modelo;
+- un completado local;
+- salida estructurada válida que contenga al menos dos grupos de equipos.
 
-For a managed local model:
+Para un modelo local gestionado:
 
 ```powershell
 $env:CIB_QVAC_MODEL_PATH = 'C:\models\model.gguf'
 npm run qvac:smoke
 ```
 
-For voice, `npm run qvac:voice-smoke` runs the equivalent proof against the real whisper adapter:
-model load, a transcription call against a synthesized (non-speech) WAV file, and unload. It
-proves the pipeline runs on this machine; it does not measure transcription accuracy — see
-docs/MODEL_STRATEGY.md's Capability 2 "Open questions" for why that is a separate, not-yet-built
-exercise. For a managed local voice model:
+Para voz, `npm run qvac:voice-smoke` ejecuta la prueba equivalente contra el adaptador real de whisper:
+carga del modelo, una llamada de transcripción contra un archivo WAV sintetizado (sin habla real), y descarga. Esto
+demuestra que el pipeline se ejecuta en esta máquina; no mide la precisión de la transcripción — ver
+"Preguntas abiertas" de la Capacidad 2 en docs/MODEL_STRATEGY.md para saber por qué eso es un ejercicio
+separado, aún no construido. Para un modelo de voz local gestionado:
 
 ```powershell
 $env:CIB_QVAC_VOICE_MODEL_PATH = 'C:\models\ggml-tiny-q8_0.bin'
 npm run qvac:voice-smoke
 ```
 
-The standard unit/integration suite intentionally uses the development mock or test doubles so it is deterministic. A green `npm test` is not represented as proof that either QVAC model loaded; the two smoke commands above are the separate proof path, and neither runs as part of `npm test`.
+La suite estándar de unidad/integración usa intencionalmente el mock de desarrollo o dobles de prueba para que sea determinista. Un `npm test` en verde no se presenta como prueba de que alguno de los dos modelos de QVAC se haya cargado; los dos comandos smoke de arriba son la vía de prueba separada, y ninguno se ejecuta como parte de `npm test`.
 
-## Privacy boundary
+## Frontera de privacidad
 
-Observation text crosses the renderer/main boundary only through explicit IPC and is sent to the selected local extraction adapter. Recorded voice audio crosses that same boundary as a byte buffer, is written to a local temp file only for the duration of one transcription call, and is deleted immediately afterward — it is never sent anywhere else and never persisted. QVAC mode has no cloud completion or transcription endpoint. SQLite data stays on the local device. The application does not include telemetry, analytics, remote sync, or external URL navigation.
+El texto de las observaciones cruza la frontera renderer/main solo mediante IPC explícito y se envía al adaptador de extracción local seleccionado. El audio de voz grabado cruza esa misma frontera como un búfer de bytes, se escribe en un archivo temporal local solo durante la duración de una llamada de transcripción, y se elimina inmediatamente después — nunca se envía a ningún otro lugar y nunca se persiste. El modo QVAC no tiene ningún endpoint de completado o transcripción en la nube. Los datos de SQLite permanecen en el dispositivo local. La aplicación no incluye telemetría, analítica, sincronización remota, ni navegación a URLs externas.
 
-The default model registry download is transport for acquiring a model artifact, not remote inference. Users who require a fully disconnected setup can provision a model file out of band and select it with `CIB_QVAC_MODEL_PATH` (text) or `CIB_QVAC_VOICE_MODEL_PATH` (voice) before initialization.
+La descarga del registro de modelos por defecto es transporte para adquirir un artefacto de modelo, no inferencia remota. Los usuarios que requieran una configuración completamente desconectada pueden aprovisionar un archivo de modelo fuera de banda y seleccionarlo con `CIB_QVAC_MODEL_PATH` (texto) o `CIB_QVAC_VOICE_MODEL_PATH` (voz) antes de la inicialización.
 
-## Version-specific limitation
+## Limitación específica de esta versión
 
-This implementation does not claim peer-to-peer inference delegation. The [QVAC SDK 0.19 release](https://github.com/tetherto/qvac/releases/tag/sdk-v0.19.0) removed inference delegation/provider mode. Both the extraction port and the speech-to-text port remain implementation-neutral for future supported local or distributed strategies, but their current QVAC implementations are strictly on-device.
+Esta implementación no afirma delegación de inferencia entre pares (peer-to-peer). El [lanzamiento del SDK de QVAC 0.19](https://github.com/tetherto/qvac/releases/tag/sdk-v0.19.0) eliminó la delegación de inferencia/modo de proveedor. Tanto el puerto de extracción como el puerto de voz a texto permanecen neutrales respecto a la implementación para futuras estrategias locales o distribuidas soportadas, pero sus implementaciones actuales de QVAC son estrictamente en el dispositivo.
 
-References: [QVAC JavaScript/TypeScript SDK](https://docs.qvac.tether.io/js-ts-sdk/), [Electron tutorial](https://docs.qvac.tether.io/tutorials/electron/), and [system requirements](https://docs.qvac.tether.io/system-requirements/).
+Referencias: [SDK de QVAC para JavaScript/TypeScript](https://docs.qvac.tether.io/js-ts-sdk/), [tutorial de Electron](https://docs.qvac.tether.io/tutorials/electron/), y [requisitos de sistema](https://docs.qvac.tether.io/system-requirements/).

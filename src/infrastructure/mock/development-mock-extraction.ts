@@ -343,7 +343,7 @@ export class DevelopmentMockObservationExtractionService implements ObservationE
   private readonly runtime: InferenceRuntimeInfo = {
     engine: 'Development Mock',
     execution: 'Development only',
-    model: 'Analizador de fixture determinista',
+    model: 'Generador de datos de prueba',
     networkRequiredForInference: false,
     status: 'ready',
     detail: 'No válido para la demo final de QVAC.',

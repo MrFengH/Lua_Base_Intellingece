@@ -1,67 +1,67 @@
-# Data schema
+# Esquema de datos
 
-The conceptual model for a field observation of installed medical equipment, and how it maps to
-the TypeScript types and the SQLite tables that exist today.
+El modelo conceptual de una observación de campo de equipo médico instalado, y cómo se mapea a
+los tipos de TypeScript y las tablas de SQLite que existen hoy.
 
-## The governing principle
+## El principio rector
 
-An observation records **what one person reported during one visit**, not the current truth
-about a hospital's equipment. The schema therefore separates four things that a naive design
-would collapse into one value:
+Una observación registra **lo que una persona reportó durante una visita**, no la verdad actual
+sobre el equipo de un hospital. El esquema por lo tanto separa cuatro cosas que un diseño ingenuo
+colapsaría en un solo valor:
 
-| Question                                              | Where the answer lives                                 |
-| ----------------------------------------------------- | ------------------------------------------------------ |
-| What was said?                                        | `EvidenceItem.rawText`, retained verbatim              |
-| What was directly observed vs. inferred?              | `FieldProvenance.origin`                               |
-| Is the value known, unknown, or simply not asked yet? | `FieldProvenance.knowledgeState`                       |
-| How sure was the speaker?                             | `FieldProvenance.certainty` and `ConfidenceAssessment` |
+| Pregunta                                                                  | Dónde vive la respuesta                              |
+| ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| ¿Qué se dijo?                                                             | `EvidenceItem.rawText`, conservado textualmente      |
+| ¿Qué se observó directamente vs. qué se infirió?                          | `FieldProvenance.origin`                             |
+| ¿El valor es conocido, desconocido, o simplemente no se preguntó todavía? | `FieldProvenance.knowledgeState`                     |
+| ¿Qué tan seguro estaba el hablante?                                       | `FieldProvenance.certainty` y `ConfidenceAssessment` |
 
-**`null` or `Unknown` always beats a plausible guess.** A field that cannot represent "not
-known" is a schema defect.
+**`null` o `Unknown` siempre gana a una suposición plausible.** Un campo que no puede representar
+"no se sabe" es un defecto de esquema.
 
-## Knowledge state, origin, certainty
+## Estado de conocimiento, origen, certeza
 
-These are three independent axes, defined in `src/domain/model/enums.ts`.
+Estos son tres ejes independientes, definidos en `src/domain/model/enums.ts`.
 
-**`KnowledgeState`** — is there a value at all?
+**`KnowledgeState`** — ¿existe siquiera un valor?
 
-- `Missing` — never mentioned, never asked. Justifies one follow-up question.
-- `Known` — a value exists.
-- `DeclaredUnknown` — the person said they do not know. This is information. The system must
-  never ask the same field again, and must never later fill it by inference.
+- `Missing` — nunca se mencionó, nunca se preguntó. Justifica una pregunta de seguimiento.
+- `Known` — existe un valor.
+- `DeclaredUnknown` — la persona dijo que no lo sabe. Esto es información. El sistema nunca
+  debe volver a preguntar el mismo campo, y nunca debe rellenarlo más tarde por inferencia.
 
-**`FieldOrigin`** — where did the value come from?
+**`FieldOrigin`** — ¿de dónde vino el valor?
 
-- `Observed` — seen directly.
-- `Reported` — stated by the person.
-- `Derived` — computed by a rule, for example an installation year from an age.
+- `Observed` — visto directamente.
+- `Reported` — declarado por la persona.
+- `Derived` — calculado por una regla, por ejemplo un año de instalación a partir de una antigüedad.
 - `Unknown`.
 
-**`FactCertainty`** — how firm was the statement?
+**`FactCertainty`** — ¿qué tan firme fue la declaración?
 
-- `Explicit` — "the manufacturer is NovaMed".
-- `Uncertain` — "I think the manufacturer was NovaMed".
+- `Explicit` — "el fabricante es NovaMed".
+- `Uncertain` — "creo que el fabricante era NovaMed".
 - `Unknown`.
 
-For live extraction, `certainty` may also be `null` when the extractor supplied no certainty at
-all. `null` means "not supplied"; `Unknown` means the extractor explicitly classified certainty as
-unknown. Neither is promoted to `Explicit`.
+En la extracción en vivo, `certainty` también puede ser `null` cuando el extractor no suministró ninguna
+certeza. `null` significa "no suministrado"; `Unknown` significa que el extractor clasificó explícitamente la
+certeza como desconocida. Ninguno de los dos se asciende a `Explicit`.
 
-The combination is what makes the record honest. "I think the manufacturer was NovaMed" is
-`Known` + `Reported` + `Uncertain`, not `Known` + `Observed` + `Explicit`.
+La combinación es lo que hace honesto al registro. "Creo que el fabricante era NovaMed" es
+`Known` + `Reported` + `Uncertain`, no `Known` + `Observed` + `Explicit`.
 
-During a pending follow-up, declared-unknown replies are recognised deterministically rather than
-sent to the extraction engine. Supported Spanish forms include `no sé`, `no se`, `no lo sé`,
-`no lo se`, `ni idea`, `no estoy seguro`, `no estoy segura`, `no me fijé`, `no sabría decir` and
-`ni idea la verdad`; the existing English forms include `I don't know`, `I do not know`, `unknown`
-and `not sure`. An isolated `no` is recognised only while answering a `Do you know…?` follow-up.
-The longer matcher is anchored to the start of the reply, while the short `no` form must be the
-entire reply, so a correction such as `no es NovaMed, es Orion Imaging` remains a known answer and
-proceeds through extraction.
+Durante un seguimiento pendiente, las respuestas de desconocido declarado se reconocen de forma determinista en lugar de
+enviarse al motor de extracción. Las formas en español soportadas incluyen `no sé`, `no se`, `no lo sé`,
+`no lo se`, `ni idea`, `no estoy seguro`, `no estoy segura`, `no me fijé`, `no sabría decir` y
+`ni idea la verdad`; las formas en inglés existentes incluyen `I don't know`, `I do not know`, `unknown`
+y `not sure`. Un `no` aislado se reconoce solo mientras se responde a un seguimiento del tipo "¿Conoce…?".
+El comparador más largo está anclado al inicio de la respuesta, mientras que la forma corta `no` debe ser toda
+la respuesta, así que una corrección como `no es NovaMed, es Orion Imaging` sigue siendo una respuesta conocida y
+procede por extracción.
 
-## Age is a union, not a number
+## La antigüedad es una unión, no un número
 
-`ApproximateAge` in `src/domain/model/age.ts`:
+`ApproximateAge` en `src/domain/model/age.ts`:
 
 ```ts
 | { type: 'exact'; years: number }
@@ -71,178 +71,177 @@ proceeds through extraction.
 | { type: 'unknown' }
 ```
 
-"About eight years old" is `estimate`, never `exact`. "Fairly old" is `qualitative` and must
-never acquire a number. This is the single most important anti-fabrication guard in the schema,
-because age is the field a model is most tempted to invent.
+"Unos ocho años" es `estimate`, nunca `exact`. "Bastante viejo" es `qualitative` y nunca debe
+adquirir un número. Esta es la salvaguarda anti-fabricación más importante en el esquema,
+porque la antigüedad es el campo que un modelo está más tentado a inventar.
 
-`InstallationEstimate` is derived from age and the observation date. It carries its own
-`origin`, is marked `Estimated` rather than `Exact` when the age was approximate, and stays
-`unknown` when the age was qualitative or unknown.
+`InstallationEstimate` se deriva de la antigüedad y la fecha de observación. Lleva su propio
+`origin`, se marca `Estimated` en lugar de `Exact` cuando la antigüedad era aproximada, y permanece
+`unknown` cuando la antigüedad era cualitativa o desconocida.
 
-## Entities
+## Entidades
 
 ### Customer
 
-The facility. `src/domain/model/observation.ts`, table `customers`.
+La instalación. `src/domain/model/observation.ts`, tabla `customers`.
 
-| Field                    | Required           | Notes                      |
-| ------------------------ | ------------------ | -------------------------- |
-| `id`                     | yes                |                            |
-| `name`                   | yes                | as reported                |
-| `normalizedName`         | yes                | derived, used for identity |
-| `city`, `country`        | optional, nullable |                            |
-| `createdAt`, `updatedAt` | yes                |                            |
+| Campo                    | Requerido          | Notas                          |
+| ------------------------ | ------------------ | ------------------------------ |
+| `id`                     | sí                 |                                |
+| `name`                   | sí                 | tal como se reportó            |
+| `normalizedName`         | sí                 | derivado, usado para identidad |
+| `city`, `country`        | opcional, anulable |                                |
+| `createdAt`, `updatedAt` | sí                 |                                |
 
-Identity is the unique index on `(normalized_name, city, country)`. Two spellings of the same
-hospital in different cities stay separate rather than being merged on a guess.
+La identidad es el índice único sobre `(normalized_name, city, country)`. Dos grafías del mismo
+hospital en ciudades distintas permanecen separadas en lugar de fusionarse por una suposición.
 
 ### ObservationSession
 
-One visit by one observer. Table `observation_sessions`. **Append-only once saved.**
+Una visita de un observador. Tabla `observation_sessions`. **De solo anexado (append-only) una vez guardada.**
 
-| Field                 | Required           | Notes                                               |
-| --------------------- | ------------------ | --------------------------------------------------- |
-| `id`                  | yes                | the `observationId` the UI and the projection trace |
-| `customerId`          | yes                |                                                     |
-| `observer`            | yes                | `{ id, displayName }`, the reporter                 |
-| `visitId`             | yes                | groups evidence from one visit                      |
-| `observedAt`          | yes                | when the observation happened                       |
-| `createdAt`           | yes                | when it was recorded                                |
-| `lastVerifiedAt`      | optional, nullable |                                                     |
-| `rawInput`            | nullable           | the primary capture, retained for audit             |
-| `reportedFacility`    | yes                | the facility as reported, before matching           |
-| `evidence`            | yes                | the `EvidenceItem` list                             |
-| `supersedesSessionId` | optional, nullable | a later visit correcting an earlier one             |
+| Campo                 | Requerido          | Notas                                                        |
+| --------------------- | ------------------ | ------------------------------------------------------------ |
+| `id`                  | sí                 | el `observationId` que rastrean la interfaz y la proyección  |
+| `customerId`          | sí                 |                                                              |
+| `observer`            | sí                 | `{ id, displayName }`, el reportero                          |
+| `visitId`             | sí                 | agrupa la evidencia de una visita                            |
+| `observedAt`          | sí                 | cuándo ocurrió la observación                                |
+| `createdAt`           | sí                 | cuándo se registró                                           |
+| `lastVerifiedAt`      | opcional, anulable |                                                              |
+| `rawInput`            | anulable           | la captura principal, conservada para auditoría              |
+| `reportedFacility`    | sí                 | la instalación tal como se reportó, antes del emparejamiento |
+| `evidence`            | sí                 | la lista de `EvidenceItem`                                   |
+| `supersedesSessionId` | opcional, anulable | una visita posterior que corrige una anterior                |
 
-The table also carries `seed_key`, which is not part of the domain type. It names the seed that
-wrote the row and is `NULL` for everything a user captured, so a superseded seed can be retired
-without a heuristic guessing which rows were fixtures. Nothing but the seed machinery reads it.
+La tabla también lleva `seed_key`, que no forma parte del tipo de dominio. Nombra la semilla que
+escribió la fila y es `NULL` para todo lo que un usuario capturó, de modo que una semilla reemplazada pueda
+retirarse sin una heurística que adivine qué filas eran fixtures. Nada excepto el mecanismo de semilla lo lee.
 
-`reportedFacility` is kept separate from the resolved `Customer` on purpose. What the person
-said and what the system matched it to are two different facts.
+`reportedFacility` se mantiene deliberadamente separado del `Customer` resuelto. Lo que la persona
+dijo y con qué lo emparejó el sistema son dos hechos diferentes.
 
 ### EvidenceItem
 
-The raw material. Table `evidence_items`.
+El material crudo. Tabla `evidence_items`.
 
-| Field              | Required           | Notes                                                          |
-| ------------------ | ------------------ | -------------------------------------------------------------- |
-| `id`               | yes                | referenced by every field's provenance                         |
-| `sessionId`        | yes                |                                                                |
-| `source`           | yes                | `Text`, `Voice`, or `Photo`                                    |
-| `capturedAt`       | yes                |                                                                |
-| `rawText`          | nullable           | the verbatim text or transcript                                |
-| `localArtifactUri` | optional, nullable | a local file, never uploaded — **PLANNED** for voice and photo |
-| `metadata`         | optional           | bounded JSON                                                   |
+| Campo              | Requerido          | Notas                                                            |
+| ------------------ | ------------------ | ---------------------------------------------------------------- |
+| `id`               | sí                 | referenciado por la procedencia de cada campo                    |
+| `sessionId`        | sí                 |                                                                  |
+| `source`           | sí                 | `Text`, `Voice`, o `Photo`                                       |
+| `capturedAt`       | sí                 |                                                                  |
+| `rawText`          | anulable           | el texto textual o la transcripción                              |
+| `localArtifactUri` | opcional, anulable | un archivo local, nunca subido — **PLANIFICADO** para voz y foto |
+| `metadata`         | opcional           | JSON acotado                                                     |
 
-`Voice` and `Photo` are declared in the enum and the table constraint but no adapter produces
-them yet — **PLANNED**. A voice transcript belongs here as `rawText` with `source: 'Voice'`.
+`Voice` y `Photo` están declarados en el enum y en la restricción de la tabla, pero ningún adaptador los
+produce todavía — **PLANIFICADO**. Una transcripción de voz pertenece aquí como `rawText` con `source: 'Voice'`.
 
-Saving requires an explicit confirmation as well as the review state. When no follow-up remains
-the agent reads the draft back as a conversational summary, built deterministically from the draft
-by `ReviewSummaryService`, and asks whether it is correct. The observer's acceptance is recorded as
-an evidence item prefixed `confirmation:`. Correcting a field afterwards withdraws the acceptance
-and the summary is read back again, because the content the observer accepted has changed.
+Guardar requiere una confirmación explícita además del estado de revisión. Cuando no queda ningún seguimiento,
+el agente lee el borrador de vuelta como un resumen conversacional, construido de forma determinista a partir del
+borrador por `ReviewSummaryService`, y pregunta si es correcto. La aceptación del observador se registra como
+un ítem de evidencia con el prefijo `confirmation:`. Corregir un campo después retira la aceptación
+y el resumen se vuelve a leer, porque el contenido que el observador aceptó ha cambiado.
 
-A manual correction applied in the review step is itself evidence. Each applied correction is
-recorded as an evidence item whose id is prefixed `correction:`, so a corrected field's
-provenance points at something that exists rather than at a dangling reference.
+Una corrección manual aplicada en el paso de revisión es en sí misma evidencia. Cada corrección aplicada se
+registra como un ítem de evidencia cuyo id lleva el prefijo `correction:`, de modo que la procedencia de un campo
+corregido apunte a algo que existe en lugar de a una referencia colgante.
 
-A correction is a partial update. Only the fields the observer actually changed are sent, and a
-field they did not touch is never cleared, re-derived, or rewritten — a qualitative age survives a
-facility-name correction untouched.
+Una corrección es una actualización parcial. Solo se envían los campos que el observador realmente cambió, y un
+campo que no tocó nunca se limpia, se vuelve a derivar, ni se reescribe — una antigüedad cualitativa sobrevive
+intacta a una corrección del nombre de la instalación.
 
-Evidence ids accumulate, they never get replaced. When a field's value changes — through a later
-message, a follow-up answer, or a review correction — the new evidence id is added to the ids
-already on that field. The message that made the first claim is still reachable from the field
-that now holds the second one.
+Los IDs de evidencia se acumulan, nunca se reemplazan. Cuando el valor de un campo cambia —mediante un mensaje
+posterior, una respuesta de seguimiento, o una corrección de revisión— el nuevo ID de evidencia se agrega a los IDs
+que ya tenía ese campo. El mensaje que hizo la primera afirmación sigue siendo alcanzable desde el campo que
+ahora tiene la segunda.
 
-### Contradictions inside one capture
+### Contradicciones dentro de una captura
 
-Two incompatible claims about the same field, both of them things the observer said in the same
-session, are a contradiction. It is a different thing from `DuplicateCandidate`, which compares
-observations across saved sessions, and the two never interact.
+Dos afirmaciones incompatibles sobre el mismo campo, ambas cosas que el observador dijo dentro de la misma
+sesión, son una contradicción. Es algo distinto de `DuplicateCandidate`, que compara observaciones
+entre sesiones guardadas, y las dos cosas nunca interactúan.
 
-How a second value is treated depends on the state the field was in and on the observer's own
-wording, never on the values themselves:
+Cómo se trata un segundo valor depende del estado en que estaba el campo y de la propia redacción del
+observador, nunca de los valores en sí:
 
-| Earlier state                | Later value | Treated as      | Result                                             |
-| ---------------------------- | ----------- | --------------- | -------------------------------------------------- |
-| `Missing`                    | a value     | enrichment      | the value is taken                                 |
-| `DeclaredUnknown`            | a value     | enrichment      | the value is taken, the earlier evidence id stays  |
-| `Known`, same value          | same value  | corroboration   | unchanged, the evidence id is added                |
-| `Known`, explicit correction | different   | self-correction | the later value is taken with its stated certainty |
-| `Known`, anything else       | different   | contradiction   | later value active but `Uncertain`, and it asks    |
+| Estado anterior               | Valor posterior | Se trata como   | Resultado                                                       |
+| ----------------------------- | --------------- | --------------- | --------------------------------------------------------------- |
+| `Missing`                     | un valor        | enriquecimiento | se toma el valor                                                |
+| `DeclaredUnknown`             | un valor        | enriquecimiento | se toma el valor, el ID de evidencia anterior permanece         |
+| `Known`, mismo valor          | mismo valor     | corroboración   | sin cambios, se agrega el ID de evidencia                       |
+| `Known`, corrección explícita | diferente       | autocorrección  | se toma el valor posterior con la certeza que declara           |
+| `Known`, cualquier otra cosa  | diferente       | contradicción   | el valor posterior queda activo pero `Uncertain`, y se pregunta |
 
-A self-correction is recognised only from unambiguous wording such as "en realidad", "perdón",
-"me equivoqué", "actually" or "I meant", and hedged wording such as "quizá" or "creo que" always
-wins over it. Nothing infers which value is right from the values.
+Una autocorrección se reconoce solo por redacción inequívoca como "en realidad", "perdón",
+"me equivoqué", "actually" o "I meant", y una redacción matizada como "quizá" o "creo que" siempre
+gana sobre ella. Nada infiere cuál valor es correcto a partir de los valores.
 
-An unresolved contradiction produces a `Required` follow-up that names both claims and asks which
-to keep. Until it is answered the capture stays in `NEEDS_FOLLOW_UP`, review cannot be reached,
-and any confirmation already given is withdrawn — a contradiction can never be buried under "yes,
-that is correct". Answering it with either claim restores `Explicit` certainty; declining with a
-declared-unknown reply leaves the field `DeclaredUnknown`.
+Una contradicción sin resolver produce un seguimiento `Required` que nombra ambas afirmaciones y pregunta cuál
+conservar. Hasta que se responde, la captura permanece en `NEEDS_FOLLOW_UP`, la revisión no se puede
+alcanzar, y cualquier confirmación ya dada se retira — una contradicción nunca puede quedar enterrada bajo un
+"sí, es correcto". Responderla con cualquiera de las dos afirmaciones restaura la certeza `Explicit`; declinar
+con una respuesta de desconocido declarado deja el campo `DeclaredUnknown`.
 
-Nothing about a contradiction is persisted as its own record, and no migration was needed. The
-disagreement lives on the draft while it is open; what survives into the database is the field's
-accumulated `evidenceIds` and the append-only evidence rows, which together answer what was said
-first, what was said after, and which value was accepted.
+Nada de una contradicción se persiste como su propio registro, y no se necesitó ninguna migración. El
+desacuerdo vive en el borrador mientras está abierto; lo que sobrevive en la base de datos son los
+`evidenceIds` acumulados del campo y las filas de evidencia de solo anexado, que juntas responden qué se dijo
+primero, qué se dijo después, y qué valor se aceptó.
 
 ### EquipmentObservation
 
-One group of equipment reported in one session. Table `equipment_observations`.
+Un grupo de equipos reportado en una sesión. Tabla `equipment_observations`.
 
-| Field                  | Required           | Kind        | Notes                                                           |
-| ---------------------- | ------------------ | ----------- | --------------------------------------------------------------- |
-| `id`                   | yes                |             |                                                                 |
-| `sessionId`            | yes                |             |                                                                 |
-| `groupOrder`           | yes                |             | preserves the order the person described things                 |
-| `modality`             | yes                | inferred    | the closed vocabulary below                                     |
-| `rawModality`          | optional, nullable | observed    | the words actually used, kept when normalization is not certain |
-| `quantity`             | nullable           | inferred    | positive integer or null                                        |
-| `manufacturer`         | nullable           | inferred    |                                                                 |
-| `model`                | nullable           | inferred    |                                                                 |
-| `approximateAge`       | yes                | inferred    | the union above                                                 |
-| `installationEstimate` | yes                | **derived** | from age plus `observedAt`                                      |
-| `confidence`           | yes                | derived     | `ConfidenceAssessment`                                          |
-| `status`               | yes                | derived     | `Confirmed`, `Reported`, `Estimated`, `Unknown`, see below      |
-| `notes`                | nullable           | observed    |                                                                 |
-| `evidenceIds`          | yes                |             | which evidence supports this group                              |
-| `fieldProvenance`      | yes                |             | per-field knowledge state, origin, certainty, evidence ids      |
+| Campo                  | Requerido          | Tipo         | Notas                                                                           |
+| ---------------------- | ------------------ | ------------ | ------------------------------------------------------------------------------- |
+| `id`                   | sí                 |              |                                                                                 |
+| `sessionId`            | sí                 |              |                                                                                 |
+| `groupOrder`           | sí                 |              | preserva el orden en que la persona describió las cosas                         |
+| `modality`             | sí                 | inferido     | el vocabulario cerrado de abajo                                                 |
+| `rawModality`          | opcional, anulable | observado    | las palabras realmente usadas, conservadas cuando la normalización no es segura |
+| `quantity`             | anulable           | inferido     | entero positivo o nulo                                                          |
+| `manufacturer`         | anulable           | inferido     |                                                                                 |
+| `model`                | anulable           | inferido     |                                                                                 |
+| `approximateAge`       | sí                 | inferido     | la unión de arriba                                                              |
+| `installationEstimate` | sí                 | **derivado** | a partir de la antigüedad más `observedAt`                                      |
+| `confidence`           | sí                 | derivado     | `ConfidenceAssessment`                                                          |
+| `status`               | sí                 | derivado     | `Confirmed`, `Reported`, `Estimated`, `Unknown`, ver abajo                      |
+| `notes`                | anulable           | observado    |                                                                                 |
+| `evidenceIds`          | sí                 |              | qué evidencia respalda este grupo                                               |
+| `fieldProvenance`      | sí                 |              | estado de conocimiento, origen, certeza e IDs de evidencia por campo            |
 
-#### Observation status
+#### Estado de la observación
 
-Status answers **how the observer came to know this**, and nothing else. It is not a confidence
-level and it is not a field certainty. All three can disagree, and that is correct: "I saw an MR
-that looked about seven years old" is `Confirmed` with an `Uncertain` age, and "they told me it
-is exactly seven years old" is `Reported` with an `Explicit` age.
+El estado responde **cómo llegó el observador a saber esto**, y nada más. No es un nivel de
+confianza ni es la certeza de un campo. Los tres pueden estar en desacuerdo, y eso es correcto: "vi un MR
+que parecía tener unos siete años" es `Confirmed` con una antigüedad `Uncertain`, y "me dijeron que tiene
+exactamente siete años" es `Reported` con una antigüedad `Explicit`.
 
-| Value       | Meaning                                                            |
-| ----------- | ------------------------------------------------------------------ |
-| `Confirmed` | The observer states they saw the equipment themselves              |
-| `Reported`  | The observer is relaying what another person or source told them   |
-| `Estimated` | The observer presents the account as their own estimate            |
-| `Unknown`   | The source could not be established, including a declined question |
+| Valor       | Significado                                                           |
+| ----------- | --------------------------------------------------------------------- |
+| `Confirmed` | El observador afirma haber visto el equipo él mismo                   |
+| `Reported`  | El observador está transmitiendo lo que otra persona o fuente le dijo |
+| `Estimated` | El observador presenta el relato como su propia estimación            |
+| `Unknown`   | No se pudo establecer el origen, incluida una pregunta rechazada      |
 
-It is decided by `deriveObservationStatus` in `src/domain/rules/observation-basis.ts` from the
-session's `observationBasis`, which is set either by an unambiguous statement in the observer's
-own words or by their answer to the `Preferred` follow-up question "Did you observe this equipment
-directly, was it reported to you by someone else, or is it an estimate?". When the basis was never
-established, and only then, status falls back to the older age-derived rule, which is what every
-record written before this existed relied on. Declining the question stores `Unknown`; it never
-produces `Confirmed`.
+Lo decide `deriveObservationStatus` en `src/domain/rules/observation-basis.ts` a partir del
+`observationBasis` de la sesión, que se establece ya sea por una declaración inequívoca en las propias
+palabras del observador o por su respuesta a la pregunta de seguimiento `Preferred` "¿Observó este equipo
+directamente, se lo reportó otra persona, o es una estimación?". Cuando el origen nunca se estableció, y solo
+entonces, el estado recae en la regla anterior derivada de la antigüedad, que es en lo que se apoyaba cada
+registro escrito antes de que esto existiera. Declinar la pregunta almacena `Unknown`; nunca produce `Confirmed`.
 
-The 20 official records are a transcription, not a capture. They carry the workbook's own
-`Status` column, 13 `Reported` and 7 `Estimated`, and this rule does not touch them.
+Los 20 registros oficiales son una transcripción, no una captura. Llevan la propia columna `Status` del
+libro de trabajo, 13 `Reported` y 7 `Estimated`, y esta regla no los toca.
 
-#### Modality vocabulary
+#### Vocabulario de modalidad
 
-A closed set, defined once in `src/domain/model/enums.ts` and embedded in the JSON schema the
-model must satisfy. The six values match the official `Dummy Reference Lists` modality list;
-`Unknown` is this project's addition and exists so uncertainty stays uncertain.
+Un conjunto cerrado, definido una vez en `src/domain/model/enums.ts` e incrustado en el esquema JSON que el
+modelo debe satisfacer. Los seis valores coinciden con la lista oficial de modalidad de `Dummy Reference Lists`;
+`Unknown` es la adición de este proyecto y existe para que la incertidumbre permanezca incierta.
 
-| Value                  | Recognised synonyms, case and accent insensitive                                         |
+| Valor                  | Sinónimos reconocidos, sin distinguir mayúsculas ni acentos                              |
 | ---------------------- | ---------------------------------------------------------------------------------------- |
 | `MR`                   | `mr`, `mri`, `magnetic resonance`, `resonancia`, `resonador`, `resonadores`              |
 | `CT`                   | `ct`, `cat scan`, `computed tomography`, `tomografia`, `tomografo`, `tomografos`         |
@@ -250,143 +249,143 @@ model must satisfy. The six values match the official `Dummy Reference Lists` mo
 | `X-Ray`                | `x-ray`, `xray`, `rayos x`                                                               |
 | `Patient Monitoring`   | `patient monitoring`, `patient monitor`, `monitor de paciente`, `monitoreo de pacientes` |
 | `Image Guided Therapy` | `image guided therapy`, `image-guided therapy`, `igt`, `terapia guiada por imagen`       |
-| `Unknown`              | `unknown`, `desconocido`, and **anything unrecognised**                                  |
+| `Unknown`              | `unknown`, `desconocido`, y **cualquier cosa no reconocida**                             |
 
-`normalizeModality` never guesses. A bare `scanner` is ambiguous between MR and CT, so it
-normalizes to `Unknown` and the original wording is kept in `rawModality`. The correction form
-presents modality as a select over this vocabulary, so a typed value can no longer be silently
-discarded.
+`normalizeModality` nunca adivina. Un simple `scanner` es ambiguo entre MR y CT, así que se
+normaliza a `Unknown` y la redacción original se conserva en `rawModality`. El formulario de corrección
+presenta la modalidad como un selector sobre este vocabulario, así que un valor escrito ya no puede descartarse
+silenciosamente.
 
-**Grouping matters.** "Two are about nine years old and one is about three" is two groups, not
-one group of three with an averaged age. Averaging would fabricate.
+**El agrupamiento importa.** "Dos tienen unos nueve años y uno unos tres" son dos grupos, no un
+grupo de tres con una antigüedad promediada. Promediar sería fabricar.
 
-**Serial number** is not in the schema. It is theoretically observable from a device label, but
-nothing in the current capture flow collects it, and adding an unused field invites a model to
-fill it. Add it when a capture path actually produces it — **PROPOSED**, see
+**El número de serie** no está en el esquema. Es teóricamente observable a partir de la etiqueta de un
+dispositivo, pero nada en el flujo de captura actual lo recolecta, y agregar un campo sin usar invita al modelo
+a rellenarlo. Agréguelo cuando una vía de captura realmente lo produzca — **PROPUESTO**, ver
 [DECISIONS.md](DECISIONS.md).
 
 ### ConfidenceAssessment
 
-Not a bare number. `src/domain/model/confidence.ts`.
+No es un número simple. `src/domain/model/confidence.ts`.
 
-| Field             | Notes                                                              |
-| ----------------- | ------------------------------------------------------------------ |
-| `level`           | `High`, `Medium`, `Low`, `Unknown`                                 |
-| `score`           | 0 to 1, or `null` when nothing is known                            |
-| `reasons`         | coded reasons, for example `UNCERTAINTY_LANGUAGE`, `DERIVED_FACTS` |
-| `evidenceIds`     | what the assessment was based on                                   |
-| `strategyVersion` | `confidence-v1`, so stored assessments stay interpretable          |
+| Campo             | Notas                                                                       |
+| ----------------- | --------------------------------------------------------------------------- |
+| `level`           | `High`, `Medium`, `Low`, `Unknown`                                          |
+| `score`           | de 0 a 1, o `null` cuando no se sabe nada                                   |
+| `reasons`         | razones codificadas, por ejemplo `UNCERTAINTY_LANGUAGE`, `DERIVED_FACTS`    |
+| `evidenceIds`     | en qué se basó la evaluación                                                |
+| `strategyVersion` | `confidence-v1`, para que las evaluaciones almacenadas sigan interpretables |
 
-A score with no explanation is not acceptable output. The reason codes are what let a reviewer
-disagree with the number.
+Un puntaje sin explicación no es una salida aceptable. Los códigos de razón son lo que permite a un
+revisor estar en desacuerdo con el número.
 
-**Provenance is surfaced, not only stored.** `InstalledBaseItem`, the projection returned by
-`getCustomer360`, carries `rawModality` and `fieldProvenance` alongside `confidence` — nothing new
-is persisted and no IPC contract changes; the repository's mapping into the view was simply
-extended to include data that already existed per equipment row. The Customer 360 card in
-`App.tsx` renders the confidence level with its reason codes translated to human labels, the
-status with a fixed one-line explanation of what that status means (never recomputed from the
-record), and an expandable "Field details" section listing each field's knowledge state
-(`Known` / `Declared unknown` / `Not mentioned`), its origin and its certainty (`Explicit`,
-`Uncertain`, `Unknown`, or "Not supplied" for a `null` certainty). A field whose evidence includes
-a `correction:`-prefixed id is marked `Corrected`, reading the same evidence trail corrections
-already write rather than adding a new history mechanism. `rawModality` is shown as "Captured as"
-only when it differs from the normalized `modality`; official-seed rows, where both are identical,
-show nothing extra. A record with no per-field provenance at all — for example a historical row —
-degrades to an empty details section rather than failing.
+**La procedencia se muestra, no solo se almacena.** `InstalledBaseItem`, la proyección devuelta por
+`getCustomer360`, lleva `rawModality` y `fieldProvenance` junto a `confidence` — no se persiste nada nuevo
+y no cambia ningún contrato de IPC; el mapeo del repositorio hacia la vista simplemente se extendió para incluir
+datos que ya existían por fila de equipo. La tarjeta de Customer 360 en
+`App.tsx` renderiza el nivel de confianza con sus códigos de razón traducidos a etiquetas humanas, el
+estado con una explicación fija de una línea sobre qué significa ese estado (nunca recalculada a partir del
+registro), y una sección expandible de "Detalles del campo" que lista el estado de conocimiento de cada campo
+(`Known` / `Declared unknown` / `Not mentioned`), su origen y su certeza (`Explicit`,
+`Uncertain`, `Unknown`, o "Not supplied" para una certeza `null`). Un campo cuya evidencia incluye
+un id con prefijo `correction:` se marca `Corrected`, leyendo el mismo rastro de evidencia que las correcciones
+ya escriben en lugar de agregar un nuevo mecanismo de historial. `rawModality` se muestra como "Captured as"
+solo cuando difiere de la `modality` normalizada; las filas de la semilla oficial, donde ambas son idénticas,
+no muestran nada adicional. Un registro sin ninguna procedencia por campo —por ejemplo una fila histórica—
+se degrada a una sección de detalles vacía en lugar de fallar.
 
 ### DuplicateCandidate
 
-Table `duplicate_candidates`. See the deduplication section below.
+Tabla `duplicate_candidates`. Ver la sección de deduplicación de abajo.
 
-## Field classification summary
+## Resumen de clasificación de campos
 
-| Classification        | Fields                                                                                                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Required              | `observationId` (session id), `customerId`, `observer`, `visitId`, `observedAt`, `modality`, `approximateAge`, `confidence`, `fieldProvenance`, `evidenceIds` |
-| Optional / nullable   | `city`, `country`, `quantity`, `manufacturer`, `model`, `notes`, `rawModality`, `lastVerifiedAt`, `localArtifactUri`                                          |
-| Inferred by the model | `modality`, `quantity`, `manufacturer`, `model`, `approximateAge`, `notes`, `certainty`                                                                       |
-| Derived by rules      | `normalizedName`, `installationEstimate`, `confidence`, `status`, duplicate scores                                                                            |
-| Explicitly unknowable | any field with `knowledgeState: 'DeclaredUnknown'`                                                                                                            |
-| Not modelled yet      | `serialNumber`, `locationWithinFacility`, `condition` — **PROPOSED**                                                                                          |
+| Clasificación                 | Campos                                                                                                                                                          |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Requerido                     | `observationId` (id de sesión), `customerId`, `observer`, `visitId`, `observedAt`, `modality`, `approximateAge`, `confidence`, `fieldProvenance`, `evidenceIds` |
+| Opcional / anulable           | `city`, `country`, `quantity`, `manufacturer`, `model`, `notes`, `rawModality`, `lastVerifiedAt`, `localArtifactUri`                                            |
+| Inferido por el modelo        | `modality`, `quantity`, `manufacturer`, `model`, `approximateAge`, `notes`, `certainty`                                                                         |
+| Derivado por reglas           | `normalizedName`, `installationEstimate`, `confidence`, `status`, puntajes de duplicados                                                                        |
+| Explícitamente no cognoscible | cualquier campo con `knowledgeState: 'DeclaredUnknown'`                                                                                                         |
+| Aún no modelado               | `serialNumber`, `locationWithinFacility`, `condition` — **PROPUESTO**                                                                                           |
 
-`locationWithinFacility` and `condition` were considered and left out. Neither is collected by
-the current follow-up flow, and an unused nullable field is an invitation to hallucinate. Both
-are reasonable additions once the capture flow asks for them.
+`locationWithinFacility` y `condition` se consideraron y se dejaron fuera. Ninguno lo recolecta el
+flujo de seguimiento actual, y un campo anulable sin usar es una invitación a alucinar. Ambos son
+adiciones razonables una vez que el flujo de captura los pida.
 
-## The extraction contract
+## El contrato de extracción
 
-`src/application/contracts/extraction.ts` defines the Zod schema the model must satisfy. It is
-deliberately narrower than the domain model: the model produces observations, and the domain
-derives everything else.
+`src/application/contracts/extraction.ts` define el esquema de Zod que el modelo debe satisfacer. Es
+deliberadamente más estrecho que el modelo de dominio: el modelo produce observaciones, y el dominio
+deriva todo lo demás.
 
-The model returns: `customer { name, city, country }` and `equipment[] { modality, rawModality,
-quantity, manufacturer, model, approximateAge, notes, certainty }`. `certainty` is nullable when
-the extractor supplies no assessment. It does **not** return
-confidence scores, installation years, provenance, or duplicate judgements. Those are computed
-from rules the team can inspect and version, not asserted by a model.
+El modelo devuelve: `customer { name, city, country }` y `equipment[] { modality, rawModality,
+quantity, manufacturer, model, approximateAge, notes, certainty }`. `certainty` es anulable cuando el
+extractor no suministra ninguna evaluación. **No** devuelve
+puntajes de confianza, años de instalación, procedencia, ni juicios de duplicados. Esos se calculan
+a partir de reglas que el equipo puede inspeccionar y versionar, no los afirma un modelo.
 
-That split is the second anti-fabrication guard. A model asked for `confidence: 0.9` will
-supply 0.9.
+Esa separación es la segunda salvaguarda anti-fabricación. Un modelo al que se le pide `confidence: 0.9`
+suministrará 0.9.
 
-## Worked example
+## Ejemplo resuelto
 
-Input:
+Entrada:
 
 > "Vi dos resonadores NovaMed. Uno parece bastante nuevo y el otro probablemente tenga unos
 > ocho años. También había un tomógrafo Orion Imaging, pero no pude ver el modelo."
 
-Three groups, because the two MR units have different ages:
+Tres grupos, porque los dos equipos de MR tienen antigüedades diferentes:
 
-| Group | modality | quantity | manufacturer    | model  | approximateAge                                     | certainty   |
+| Grupo | modality | quantity | manufacturer    | model  | approximateAge                                     | certainty   |
 | ----- | -------- | -------- | --------------- | ------ | -------------------------------------------------- | ----------- |
 | 1     | `MR`     | 1        | `NovaMed`       | `null` | `{ type: 'qualitative', label: 'bastante nuevo' }` | `Uncertain` |
 | 2     | `MR`     | 1        | `NovaMed`       | `null` | `{ type: 'estimate', minYears: 7, maxYears: 9 }`   | `Uncertain` |
 | 3     | `CT`     | 1        | `Orion Imaging` | `null` | `{ type: 'unknown' }`                              | `Explicit`  |
 
-Note what does **not** happen: "bastante nuevo" does not become 2 years; the missing models stay
-`null` rather than being guessed from the manufacturer; "probablemente" makes the age
-`Uncertain` rather than confident; and the original Spanish stays in `rawText`.
+Note lo que **no** ocurre: "bastante nuevo" no se convierte en 2 años; los modelos faltantes permanecen
+`null` en lugar de adivinarse a partir del fabricante; "probablemente" hace que la antigüedad sea
+`Uncertain` en lugar de segura; y el español original permanece en `rawText`.
 
-## Deduplication
+## Deduplicación
 
-The problem: two colleagues visit the same hospital and both report a NovaMed MR. Are those the
-same scanner, or two scanners?
+El problema: dos colegas visitan el mismo hospital y ambos reportan un MR de NovaMed. ¿Es el
+mismo escáner, o dos escáneres?
 
-**What exists today.** `DuplicateDetectionService` scores a pair and produces a
-`DuplicateCandidate` with a relationship of `PossibleDuplicate`, `PossibleCorroboration`,
-`PartialMatch`, `PossibleConflict`, or `NoMatch`, plus coded reasons and a version tag. Same
-customer and compatible known modality are hard gates. Manufacturer, model, and age
-compatibility adjust a transparent score. Independent observer or visit pushes toward
-corroboration rather than duplication.
+**Lo que existe hoy.** `DuplicateDetectionService` puntúa un par y produce un
+`DuplicateCandidate` con una relación de `PossibleDuplicate`, `PossibleCorroboration`,
+`PartialMatch`, `PossibleConflict`, o `NoMatch`, más razones codificadas y una etiqueta de versión. El mismo
+cliente y una modalidad conocida compatible son compuertas obligatorias. La compatibilidad de fabricante,
+modelo y antigüedad ajusta un puntaje transparente. Un observador o visita independiente empuja hacia la
+corroboración en lugar de hacia la duplicación.
 
-**Records are never merged automatically.** A candidate is a review item with a
-`resolution` that a human sets. Merging on a low-certainty score would destroy the audit trail
-that the append-only design exists to protect.
+**Los registros nunca se fusionan automáticamente.** Un candidato es un ítem de revisión con una
+`resolution` que establece un humano. Fusionar sobre un puntaje de baja certeza destruiría el rastro de
+auditoría que el diseño de solo anexado existe para proteger.
 
-`DuplicateCandidate` records the newly saved `sourceObservationId`, the already-persisted
-`candidateObservationId`, the score, relationship, coded reasons, `duplicate-v1` algorithm version,
-creation time and resolution. `candidateInstalledBaseId` is nullable and is not used by the current
-review flow. The Customer 360 review view joins each observation back to its equipment row,
-session, customer and evidence, so the person sees the two records and their source text rather than
-bare ids or JSON.
+`DuplicateCandidate` registra el `sourceObservationId` recién guardado, el `candidateObservationId` ya
+persistido, el puntaje, la relación, las razones codificadas, la versión de algoritmo `duplicate-v1`,
+el momento de creación y la resolución. `candidateInstalledBaseId` es anulable y el flujo de revisión actual
+no lo usa. La vista de revisión de Customer 360 une cada observación de vuelta a su fila de equipo,
+sesión, cliente y evidencia, así que la persona ve los dos registros y su texto de origen en lugar de
+ids desnudos o JSON.
 
-The resolution lifecycle is deliberately small. A detector-created candidate starts as
-`Unresolved` and therefore counts as pending. A person must explicitly record exactly one of
-`NotDuplicate`, `SameEquipment` or `CorroboratingEvidence`. The choice updates only the candidate's
-`resolution` column; it moves the item to resolved history and survives application restarts. It
-does not delete, merge or update either equipment observation, its evidence, quantity, status,
-confidence or installed-base projection. An already-resolved candidate is not offered for a second
-decision.
+El ciclo de vida de resolución es deliberadamente pequeño. Un candidato creado por el detector comienza como
+`Unresolved` y por lo tanto cuenta como pendiente. Una persona debe registrar explícitamente exactamente uno de
+`NotDuplicate`, `SameEquipment` o `CorroboratingEvidence`. La elección actualiza solo la columna
+`resolution` del candidato; lo mueve al historial resuelto y sobrevive a los reinicios de la aplicación. No
+elimina, fusiona ni actualiza ninguna de las dos observaciones de equipo, su evidencia, cantidad, estado,
+confianza, ni la proyección de parque instalado. Un candidato ya resuelto no se ofrece para una segunda
+decisión.
 
-**What would make this better — PROPOSED, not implemented:**
+**Qué mejoraría esto — PROPUESTO, no implementado:**
 
-- Serial number, which would make identity near-certain when available.
-- Location within the facility, which distinguishes two identical scanners in different rooms.
-- Room or department labels.
-- Installation year narrowed by a second observation.
-- A stable local equipment identity that survives across observations, so corroboration
-  accumulates instead of producing pairwise candidates.
+- Número de serie, que haría la identidad casi segura cuando esté disponible.
+- Ubicación dentro de la instalación, que distingue dos escáneres idénticos en salas distintas.
+- Etiquetas de sala o departamento.
+- Año de instalación acotado por una segunda observación.
+- Una identidad local estable de equipo que sobreviva entre observaciones, para que la corroboración
+  se acumule en lugar de producir candidatos por pares.
 
-**The rule to preserve:** a low-certainty match produces a candidate for a human, never a merge.
-See [DECISIONS.md](DECISIONS.md) for the recorded decision.
+**La regla a preservar:** una coincidencia de baja certeza produce un candidato para un humano, nunca una
+fusión. Ver [DECISIONS.md](DECISIONS.md) para la decisión registrada.

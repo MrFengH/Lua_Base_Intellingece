@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type {
   CaptureCorrection,
   CaptureSessionView,
+  ConversationMessage,
   Customer360View,
   CustomerListItem,
   DashboardView,
@@ -9,9 +10,10 @@ import type {
   DuplicateReviewObservation,
   InferenceRuntimeInfo,
   InstalledBaseItem,
+  ObservationEvidenceEntryView,
   ObservationEvidenceView,
 } from '@/application/contracts';
-import { MODALITIES } from '@/domain/model';
+import { CONFIDENCE_LEVELS, MODALITIES, OBSERVATION_STATUSES } from '@/domain/model';
 import { contradictionFieldLabel } from '@/domain/rules';
 import type {
   ApproximateAge,
@@ -33,6 +35,12 @@ import type {
 import type { IpcResult } from '@/shared';
 import luaLogo from '../../../assets/logo_lua.png';
 import { encodeWavFromAudioBuffer } from './audio/wav-encoder';
+import {
+  captureSubmissionError,
+  createOptimisticMessage,
+  reconcileOptimisticMessages,
+  type OptimisticConversationMessage,
+} from './capture-message-state';
 import {
   IconCheck,
   IconChart,
@@ -220,11 +228,6 @@ const FIELD_ORIGIN_LABELS: Record<FieldOrigin, string> = {
  * docs/DATA_SCHEMA.md — no business aging thresholds have been supplied yet. */
 const FRESHNESS_STATUS_LABELS: Record<'Unknown', string> = { Unknown: 'Desconocida' };
 
-/** Human label for the coded aging policy status. Only `'Not configured'` is produced today. */
-const AGING_POLICY_LABELS: Record<'Not configured', string> = {
-  'Not configured': 'No configurada',
-};
-
 /** `null` means the extractor supplied no certainty at all, which must read differently from an
  * explicit `Unknown` classification — neither is promoted to `Explicit`. */
 const certaintyText = (certainty: FactCertainty | null): string =>
@@ -313,6 +316,7 @@ interface SessionEvidenceGroup {
   observerName: string;
   source: string;
   rawInput: string | null;
+  items: readonly ObservationEvidenceEntryView[];
   equipmentObservationIds: string[];
 }
 
@@ -334,11 +338,28 @@ const groupEvidenceBySession = (
       observerName: item.observerName,
       source: item.source,
       rawInput: item.rawInput,
+      items: item.items,
       equipmentObservationIds: [item.equipmentObservationId],
     });
   });
   return [...bySession.values()];
 };
+
+/** Renders one raw evidence entry. When it answered a deterministic follow-up question, the
+ * question is shown as context above the answer — it is never treated as observed evidence
+ * itself, only as the reason the short answer below it makes sense. */
+const EvidenceEntry = ({ item }: { item: ObservationEvidenceEntryView }): React.JSX.Element => (
+  <div className="evidence-entry">
+    {item.followUpQuestion && (
+      <>
+        <span className="evidence-entry-label">Pregunta</span>
+        <p className="evidence-entry-question">{item.followUpQuestion}</p>
+        <span className="evidence-entry-label">Respuesta</span>
+      </>
+    )}
+    <p className="evidence-entry-text">{item.rawText ?? 'Evidencia sin texto'}</p>
+  </div>
+);
 
 /** What each equipment observation id supports, so an evidence row can say which projection
  * it backs instead of surfacing the bare internal id as its main content. */
@@ -445,8 +466,6 @@ const DuplicateReviewPanel = ({
           >
             {DUPLICATE_RELATIONSHIP_LABELS[candidate.relationship]}
           </span>
-          <h4>Puntaje: {candidate.score.toFixed(2)}</h4>
-          <small>Algoritmo de detección: {candidate.algorithmVersion}</small>
         </div>
         <div className="candidate-navigation">
           <span>
@@ -472,7 +491,6 @@ const DuplicateReviewPanel = ({
                 {DUPLICATE_REASON_LABELS[reason.code] ??
                   (reason.detail.trim() || 'Motivo registrado por el detector')}
               </span>
-              <code>{reason.code}</code>
             </li>
           ))}
         </ul>
@@ -699,6 +717,7 @@ const editStateFromCapture = (capture: CaptureSessionView): EditState => ({
 
 const CapturePage = ({
   capture,
+  optimisticMessages,
   runtime,
   busy,
   initializeRuntime,
@@ -710,10 +729,11 @@ const CapturePage = ({
   startNew,
 }: {
   capture: CaptureSessionView | null;
+  optimisticMessages: readonly ConversationMessage[];
   runtime: InferenceRuntimeInfo | null;
   busy: boolean;
   initializeRuntime: () => void;
-  submit: (text: string) => void;
+  submit: (text: string) => boolean;
   review: () => void;
   confirm: () => void;
   save: () => void;
@@ -747,7 +767,7 @@ const CapturePage = ({
     const node = transcriptLogRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [capture?.messages.length]);
+  }, [capture?.messages.length, optimisticMessages.length]);
 
   const reviewDismissed =
     reviewDismissedAt !== null && capture?.messages.length === reviewDismissedAt;
@@ -828,8 +848,7 @@ const CapturePage = ({
 
   const send = (): void => {
     if (!input.trim()) return;
-    submit(input.trim());
-    setInput('');
+    if (submit(input.trim())) setInput('');
   };
   const beginEdit = (): void => {
     if (!capture) return;
@@ -930,8 +949,8 @@ const CapturePage = ({
 
       <div className="capture-layout">
         <section className="transcript-panel">
-          <div className="transcript-log" ref={transcriptLogRef}>
-            {!capture?.messages.length && (
+          <div className="transcript-log" ref={transcriptLogRef} data-capture-id={capture?.id}>
+            {!capture?.messages.length && optimisticMessages.length === 0 && (
               <div className="transcript-empty">
                 <IconInbox className="transcript-empty-icon" />
                 <strong>Comience con lo que observó.</strong>
@@ -960,12 +979,27 @@ const CapturePage = ({
                 <p className="transcript-text">{message.content}</p>
               </div>
             ))}
+            {optimisticMessages.map((message) => (
+              <div
+                key={message.id}
+                className="transcript-entry role-user"
+                data-message-state="optimistic"
+              >
+                <span className="transcript-role">{MESSAGE_ROLE_LABELS.User}</span>
+                <p className="transcript-text">{message.content}</p>
+              </div>
+            ))}
           </div>
           <div className="composer">
             <button
               className={`mic-button ${voiceState === 'recording' ? 'recording' : ''}`}
               onClick={toggleRecording}
               disabled={busy || capture?.draft.state === 'SAVED' || voiceState === 'transcribing'}
+              aria-label={
+                voiceState === 'recording'
+                  ? 'Detener grabación'
+                  : 'Dictar con el micrófono (transcripción local con QVAC)'
+              }
               title={
                 voiceState === 'recording'
                   ? 'Detener grabación'
@@ -983,6 +1017,7 @@ const CapturePage = ({
                   send();
                 }
               }}
+              aria-label="Describa lo que vio, o responda el seguimiento"
               placeholder="Describa lo que vio, o responda el seguimiento…"
               rows={2}
               disabled={busy || capture?.draft.state === 'SAVED'}
@@ -1374,7 +1409,6 @@ const CustomersPage = ({
 
                 <div className="section-title">
                   <h3>Proyección actual del parque instalado</h3>
-                  <span>{selected.projectionStrategy}</span>
                 </div>
                 <div className="installed-base-ledger">
                   <div className="ledger-head-row">
@@ -1420,7 +1454,10 @@ const CustomersPage = ({
                               {STATUS_LABELS[item.status]}
                             </span>
                           </span>
-                          <IconChevronRight className="ledger-row-chevron" />
+                          <span className="ledger-row-affordance">
+                            <span className="ledger-row-affordance-label">Ver detalles</span>
+                            <IconChevronRight className="ledger-row-chevron" />
+                          </span>
                         </summary>
                         <div className="ledger-row-detail">
                           <dl>
@@ -1504,7 +1541,15 @@ const CustomersPage = ({
                           {session.observerName} · {session.source}
                         </span>
                       </div>
-                      <p className="evidence-text">{session.rawInput ?? 'Evidencia sin texto'}</p>
+                      {session.items.length > 0 ? (
+                        <div className="evidence-text evidence-entries">
+                          {session.items.map((item) => (
+                            <EvidenceEntry item={item} key={item.id} />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="evidence-text">{session.rawInput ?? 'Evidencia sin texto'}</p>
+                      )}
                       <div
                         className="evidence-supports"
                         title={session.equipmentObservationIds.join(', ')}
@@ -1616,7 +1661,10 @@ const CustomersPage = ({
 };
 
 const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): React.JSX.Element => {
-  const max = Math.max(1, ...Object.values(dashboard?.equipmentByModality ?? {}));
+  const modalityMax = Math.max(1, ...Object.values(dashboard?.equipmentByModality ?? {}));
+  const statusMax = Math.max(1, ...Object.values(dashboard?.equipmentByStatus ?? {}));
+  const confidenceMax = Math.max(1, ...Object.values(dashboard?.equipmentByConfidence ?? {}));
+  const ageBandMax = Math.max(1, ...(dashboard?.ageBands.map((band) => band.count) ?? []));
   return (
     <section className="dashboard-page">
       <div className="page-heading">
@@ -1644,9 +1692,9 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
               <small>necesitan enriquecimiento</small>
             </div>
             <div className="stat-block">
-              <strong>—</strong>
-              <span>Equipos con antigüedad</span>
-              <small>{AGING_POLICY_LABELS[dashboard.agingPolicy]}</small>
+              <strong>{dashboard.pendingDuplicateCandidates}</strong>
+              <span>Candidatos pendientes</span>
+              <small>revisión de duplicados</small>
             </div>
           </div>
           <div className="dashboard-grid">
@@ -1660,7 +1708,7 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
                   <div className="bar-row" key={label}>
                     <span>{label}</span>
                     <div className="bar-track">
-                      <i style={{ width: `${(value / max) * 100}%` }} />
+                      <i style={{ width: `${(value / modalityMax) * 100}%` }} />
                     </div>
                     <b className="numeric">{value}</b>
                   </div>
@@ -1669,24 +1717,114 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
             </article>
             <article className="chart-card">
               <div className="section-title">
-                <h3>Observaciones por país</h3>
-                <span>Sesiones guardadas</span>
+                <h3>Estado de la información</h3>
+                <span>Por estado declarado</span>
+              </div>
+              <div className="bars">
+                {OBSERVATION_STATUSES.map((status) => (
+                  <div className="bar-row" key={status}>
+                    <span>{STATUS_LABELS[status]}</span>
+                    <div className="bar-track">
+                      <i
+                        style={{
+                          width: `${(dashboard.equipmentByStatus[status] / statusMax) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <b className="numeric">{dashboard.equipmentByStatus[status]}</b>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="chart-card">
+              <div className="section-title">
+                <h3>Confianza</h3>
+                <span>Nivel de confianza, no estado</span>
+              </div>
+              <div className="bars">
+                {CONFIDENCE_LEVELS.map((level) => (
+                  <div className="bar-row" key={level}>
+                    <span>{CONFIDENCE_LEVEL_LABELS[level]}</span>
+                    <div className="bar-track">
+                      <i
+                        style={{
+                          width: `${(dashboard.equipmentByConfidence[level] / confidenceMax) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <b className="numeric">{dashboard.equipmentByConfidence[level]}</b>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="chart-card">
+              <div className="section-title">
+                <h3>Bandas de antigüedad</h3>
+                <span>Distribución descriptiva</span>
+              </div>
+              <div className="age-known-pair">
+                <div>
+                  <strong>{dashboard.ageKnown}</strong>
+                  <span>Con antigüedad conocida</span>
+                </div>
+                <div>
+                  <strong>{dashboard.ageUnknown}</strong>
+                  <span>Sin dato</span>
+                </div>
+              </div>
+              <div className="bars">
+                {dashboard.ageBands.map((band) => (
+                  <div className="bar-row" key={band.label}>
+                    <span>{band.label}</span>
+                    <div className="bar-track">
+                      <i style={{ width: `${(band.count / ageBandMax) * 100}%` }} />
+                    </div>
+                    <b className="numeric">{band.count}</b>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="chart-card">
+              <div className="section-title">
+                <h3>Equipos proyectados por país</h3>
+                <span>Cantidad · visitas</span>
               </div>
               <div className="country-list">
-                {Object.entries(dashboard.observationsByCountry).map(([country, count]) => (
-                  <div key={country}>
-                    <span>{country}</span>
-                    <b className="numeric">{count}</b>
+                {dashboard.equipmentByCountry.map((row) => (
+                  <div key={row.country}>
+                    <span>{row.country}</span>
+                    <span className="country-list-aux">{row.visitCount} visitas</span>
+                    <b className="numeric">{row.equipmentCount}</b>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="chart-card">
+              <div className="section-title">
+                <h3>Datos que requieren enriquecimiento</h3>
+                <span>Campos faltantes</span>
+              </div>
+              <div className="country-list">
+                {dashboard.fieldEnrichmentGaps.map((gap) => (
+                  <div key={gap.field}>
+                    <span>{FIELD_LABELS[gap.field]}</span>
+                    <span className="country-list-aux">
+                      {gap.declaredUnknown > 0
+                        ? `${gap.declaredUnknown} desconocido declarado`
+                        : ''}
+                    </span>
+                    <b className="numeric">{gap.missing}</b>
                   </div>
                 ))}
               </div>
             </article>
           </div>
           <div className="policy-note">
-            <strong>La vigencia queda deliberadamente sin clasificar.</strong>
+            <strong>La vigencia (días desde la observación) permanece sin clasificar.</strong>
             <span>
-              No se definieron umbrales de negocio, así que Reciente/Envejeciendo/Obsoleto sigue
-              siendo una regla configurable a futuro.
+              No se definieron umbrales de negocio de vigencia. Las bandas de antigüedad de arriba
+              son una distribución descriptiva de los años reportados, no una política de
+              obsolescencia.
             </span>
           </div>
         </>
@@ -1699,11 +1837,16 @@ function App(): React.JSX.Element {
   const [page, setPage] = useState<Page>('capture');
   const [runtime, setRuntime] = useState<InferenceRuntimeInfo | null>(null);
   const [capture, setCapture] = useState<CaptureSessionView | null>(null);
+  const [optimisticMessages, setOptimisticMessages] = useState<
+    readonly OptimisticConversationMessage[]
+  >([]);
   const [customers, setCustomers] = useState<readonly CustomerListItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer360View | null>(null);
   const [dashboard, setDashboard] = useState<DashboardView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submitInFlightRef = useRef(false);
+  const optimisticMessageSequenceRef = useRef(0);
 
   const run = useCallback(async <T,>(operation: () => Promise<T>): Promise<T | null> => {
     setBusy(true);
@@ -1730,6 +1873,7 @@ function App(): React.JSX.Element {
   const startNew = useCallback(async (): Promise<void> => {
     const result = await window.installedBaseApi.startCapture('Text');
     setCapture(unwrap(result));
+    setOptimisticMessages([]);
   }, []);
 
   useEffect(() => {
@@ -1767,6 +1911,45 @@ function App(): React.JSX.Element {
       });
     },
     [run],
+  );
+
+  const submitCaptureMessage = useCallback(
+    (text: string): boolean => {
+      if (!capture || submitInFlightRef.current) return false;
+
+      submitInFlightRef.current = true;
+      const captureId = capture.id;
+      const optimisticMessage = createOptimisticMessage(
+        captureId,
+        text,
+        ++optimisticMessageSequenceRef.current,
+        new Date().toISOString(),
+      );
+      setOptimisticMessages((current) => [...current, optimisticMessage]);
+
+      void run(async () => {
+        let authoritative: CaptureSessionView;
+        try {
+          authoritative = unwrap(
+            await window.installedBaseApi.submitCaptureMessage(captureId, text),
+          );
+        } catch (cause) {
+          throw captureSubmissionError(cause);
+        }
+        // The workflow response contains every message accepted for this capture, including a
+        // message retained by the backend before a previous inference failure. Replace the
+        // session wholesale and discard only this capture's temporary renderer entries; never
+        // reconcile by message text, because equal text can be two legitimate turns.
+        setCapture(authoritative);
+        setOptimisticMessages((current) => reconcileOptimisticMessages(current, captureId));
+        setRuntime(unwrap(await window.installedBaseApi.getInferenceStatus()));
+      }).finally(() => {
+        submitInFlightRef.current = false;
+      });
+
+      return true;
+    },
+    [capture, run],
   );
 
   const resolveDuplicateCandidate = useCallback(
@@ -1837,6 +2020,9 @@ function App(): React.JSX.Element {
         {page === 'capture' && (
           <CapturePage
             capture={capture}
+            optimisticMessages={optimisticMessages.filter(
+              (message) => message.captureId === capture?.id,
+            )}
             runtime={runtime}
             busy={busy}
             initializeRuntime={() =>
@@ -1844,15 +2030,7 @@ function App(): React.JSX.Element {
                 setRuntime(unwrap(await window.installedBaseApi.initializeInference())),
               )
             }
-            submit={(text) =>
-              capture &&
-              void run(async () => {
-                setCapture(
-                  unwrap(await window.installedBaseApi.submitCaptureMessage(capture.id, text)),
-                );
-                setRuntime(unwrap(await window.installedBaseApi.getInferenceStatus()));
-              })
-            }
+            submit={submitCaptureMessage}
             review={() =>
               capture &&
               void run(async () =>

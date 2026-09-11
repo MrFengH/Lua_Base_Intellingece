@@ -1,39 +1,39 @@
-# Architecture
+# Arquitectura
 
-## Shape of the vertical slice
+## Forma del corte vertical
 
-The dependency direction is inward: Electron/UI adapters depend on application ports and use cases, which depend on domain concepts. QVAC and SQLite are replaceable infrastructure implementations rather than domain dependencies.
+La dirección de las dependencias es hacia adentro: los adaptadores de Electron/UI dependen de los puertos y casos de uso de la aplicación, que a su vez dependen de conceptos de dominio. QVAC y SQLite son implementaciones de infraestructura reemplazables, no dependencias del dominio.
 
 ```mermaid
 flowchart LR
-  subgraph Renderer[React renderer]
-    Capture[Conversational capture]
+  subgraph Renderer[Renderer de React]
+    Capture[Captura conversacional]
     C360[Customer 360]
     Dash[Dashboard]
   end
 
-  subgraph Electron[Electron boundary]
-    Preload[Typed preload API]
-    IPC[Validated IPC handlers]
+  subgraph Electron[Frontera de Electron]
+    Preload[API de preload tipada]
+    IPC[Handlers de IPC validados]
   end
 
-  subgraph Application[Application layer]
+  subgraph Application[Capa de aplicación]
     Workflow[CaptureWorkflowService]
     Queries[InstalledBaseQueryService]
     ExtractPort[ObservationExtractionPort]
-    RepoPort[Repository ports]
+    RepoPort[Puertos de repositorio]
   end
 
-  subgraph Domain[Domain]
-    Rules[Normalization and age derivation]
-    Confidence[Confidence strategy]
-    Duplicate[Duplicate/corroboration scoring]
-    Evidence[Observation evidence aggregate]
+  subgraph Domain[Dominio]
+    Rules[Normalización y derivación de antigüedad]
+    Confidence[Estrategia de confianza]
+    Duplicate[Puntuación de duplicados/corroboración]
+    Evidence[Agregado de evidencia de observación]
   end
 
-  subgraph Infrastructure[Infrastructure]
-    QVAC[QVAC on-device adapter]
-    Mock[Development Mock]
+  subgraph Infrastructure[Infraestructura]
+    QVAC[Adaptador de QVAC en el dispositivo]
+    Mock[Mock de desarrollo]
     SQLite[(node:sqlite)]
   end
 
@@ -47,103 +47,103 @@ flowchart LR
   Workflow --> Confidence
   Workflow --> Duplicate
   Workflow --> Evidence
-  ExtractPort -. implemented by .-> QVAC
-  ExtractPort -. implemented by .-> Mock
-  RepoPort -. implemented by .-> SQLite
+  ExtractPort -. implementado por .-> QVAC
+  ExtractPort -. implementado por .-> Mock
+  RepoPort -. implementado por .-> SQLite
   Queries --> RepoPort
 ```
 
-The renderer has no Node integration and cannot invoke arbitrary Electron channels. `contextIsolation` and the renderer sandbox are enabled; preload exposes a narrow typed API. IPC payloads are parsed with Zod before a use case is called.
+El renderer no tiene integración con Node y no puede invocar canales arbitrarios de Electron. `contextIsolation` y el sandbox del renderer están habilitados; el preload expone una API tipada acotada. Los payloads de IPC se parsean con Zod antes de invocar un caso de uso.
 
-## Capture and save flow
+## Flujo de captura y guardado
 
 ```mermaid
 sequenceDiagram
-  participant U as Field user
-  participant UI as React capture
-  participant W as Capture workflow
-  participant X as QVAC or labelled mock
-  participant D as Domain rules
-  participant DB as SQLite repository
+  participant U as Usuario de campo
+  participant UI as Captura en React
+  participant W as Flujo de captura
+  participant X as QVAC o mock etiquetado
+  participant D as Reglas de dominio
+  participant DB as Repositorio SQLite
 
-  U->>UI: Free-text observation
+  U->>UI: Observación en texto libre
   UI->>W: submit(captureId, text)
-  W->>X: extract(text, draft context)
-  X-->>W: Zod-validated structured facts
-  W->>D: normalize, preserve uncertainty, select follow-up
-  D-->>UI: draft + one next question
-  U->>UI: answers / corrections / review
+  W->>X: extract(text, contexto del borrador)
+  X-->>W: Hechos estructurados validados con Zod
+  W->>D: normaliza, preserva la incertidumbre, elige el seguimiento
+  D-->>UI: borrador + una pregunta siguiente
+  U->>UI: respuestas / correcciones / revisión
   UI->>W: save(captureId)
-  W->>D: derive estimates, confidence, duplicate candidates
-  W->>DB: save aggregate
-  Note over DB: BEGIN IMMEDIATE / COMMIT or ROLLBACK
-  DB-->>UI: saved observation + customer ID
+  W->>D: deriva estimaciones, confianza, candidatos duplicados
+  W->>DB: guarda el agregado
+  Note over DB: BEGIN IMMEDIATE / COMMIT o ROLLBACK
+  DB-->>UI: observación guardada + ID de cliente
 ```
 
-The conversational state is deliberately ephemeral until save. Once saved, the `ObservationSession`, `EvidenceItem`, and `EquipmentObservation` records are inserted together in one transaction. A failure in any equipment row rolls the complete write back.
+El estado conversacional es deliberadamente efímero hasta el guardado. Una vez guardado, los registros `ObservationSession`, `EvidenceItem` y `EquipmentObservation` se insertan juntos en una sola transacción. Un fallo en cualquier fila de equipo revierte la escritura completa.
 
-## Evidence and projection
+## Evidencia y proyección
 
-An observation describes what one observer reported during one visit, not an unquestionable current truth. Each equipment field carries knowledge state, origin, certainty, and evidence IDs. Raw text is retained as evidence; inference tokens and hidden reasoning are not logged.
+Una observación describe lo que un observador reportó durante una visita, no una verdad actual incuestionable. Cada campo de equipo lleva estado de conocimiento, origen, certeza e IDs de evidencia. El texto crudo se conserva como evidencia; los tokens de inferencia y el razonamiento oculto no se registran en logs.
 
-The Customer 360 read model is a projection over immutable observations. `latest-per-signature-v1` groups by modality/manufacturer/model signature and selects the latest group while returning contributing observation IDs. This keeps the current UI useful without destroying the audit trail.
+El modelo de lectura Customer 360 es una proyección sobre observaciones inmutables. `latest-per-signature-v1` agrupa por firma de modalidad/fabricante/modelo y selecciona el grupo más reciente, devolviendo los IDs de observación que contribuyeron. Esto mantiene la interfaz actual útil sin destruir el rastro de auditoría.
 
-Duplicate scoring first requires the same customer and a compatible known modality. Manufacturer, model, and numeric age compatibility adjust a transparent score. Independent observers/visits can classify a candidate as possible corroboration; conflicting facts are surfaced as possible conflict. All outcomes remain review candidates, never automatic merges.
+La puntuación de duplicados requiere primero el mismo cliente y una modalidad conocida compatible. La compatibilidad de fabricante, modelo y antigüedad numérica ajusta un puntaje transparente. Observadores/visitas independientes pueden clasificar un candidato como posible corroboración; los hechos contradictorios se marcan como posible conflicto. Todos los resultados siguen siendo candidatos de revisión, nunca fusiones automáticas.
 
-## Local data and migrations
+## Datos locales y migraciones
 
-`LocalSqliteDatabase` wraps Node's built-in `node:sqlite`, enables foreign keys and WAL, and owns explicit transactions. Migration `001` creates customers, sessions, evidence, equipment observations, evidence links, duplicate candidates, and seed imports. JSON is used only for bounded typed value objects such as age, confidence, and provenance.
+`LocalSqliteDatabase` envuelve el `node:sqlite` incorporado de Node, habilita claves foráneas y WAL, y gestiona transacciones explícitas. La migración `001` crea las tablas de clientes, sesiones, evidencia, observaciones de equipo, vínculos de evidencia, candidatos duplicados e importaciones de semilla. JSON se usa solo para objetos de valor tipados y acotados, como antigüedad, confianza y procedencia.
 
-The seed is guarded by `synthetic-development-v1`, so reopening the application or rerunning the seed does not duplicate fixtures.
+La semilla está protegida por `synthetic-development-v1`, de modo que reabrir la aplicación o volver a ejecutar la semilla no duplica los fixtures.
 
-## Extension seams
+## Puntos de extensión
 
-- `ObservationExtractionPort`: additional local inference engines can be added without changing capture rules.
-- `SpeechToTextPort`: reserved for local voice transcription; the UI currently labels voice as unavailable.
-- `EvidenceSource`: already includes Text, Voice, and Photo so later sources can attach to the same immutable session.
-- `ConfidenceScoringService`: `confidence-v1` can be replaced/versioned while stored explanations remain interpretable.
-- repository/query ports: allow projection or persistence evolution without coupling the domain to SQLite.
+- `ObservationExtractionPort`: se pueden agregar motores de inferencia local adicionales sin cambiar las reglas de captura.
+- `SpeechToTextPort`: reservado para transcripción de voz local; la interfaz actualmente etiqueta la voz como no disponible.
+- `EvidenceSource`: ya incluye Text, Voice y Photo, de modo que fuentes futuras puedan adjuntarse a la misma sesión inmutable.
+- `ConfidenceScoringService`: `confidence-v1` puede reemplazarse/versionarse mientras las explicaciones almacenadas siguen siendo interpretables.
+- puertos de repositorio/consulta: permiten evolucionar la proyección o la persistencia sin acoplar el dominio a SQLite.
 
-No remote sync or delegated inference is implied by these seams.
+Ninguno de estos puntos de extensión implica sincronización remota ni inferencia delegada.
 
-## Module responsibilities
+## Responsabilidades de los módulos
 
-| Path                              | Responsibility                                                                                                                                      | May import `@qvac/sdk` | May import Electron |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------- |
-| `src/domain/`                     | Entities, value objects, and pure rules: normalization, age and installation derivation, confidence scoring, duplicate scoring, follow-up selection | no                     | no                  |
-| `src/application/contracts/`      | Zod schemas and view types crossing the boundary, including the extraction schema                                                                   | no                     | no                  |
-| `src/application/ports/`          | Interfaces infrastructure must implement: extraction, repositories, clock, ids, speech-to-text                                                      | no                     | no                  |
-| `src/application/prompts/`        | The extraction system prompt and prompt builder                                                                                                     | no                     | no                  |
-| `src/application/use-cases/`      | `CaptureWorkflowService` and `InstalledBaseQueryService`                                                                                            | no                     | no                  |
-| `src/infrastructure/qvac/`        | The QVAC adapter, the only SDK call site                                                                                                            | **yes**                | no                  |
-| `src/infrastructure/mock/`        | The deterministic Development Mock adapter                                                                                                          | no                     | no                  |
-| `src/infrastructure/persistence/` | `node:sqlite` database, migrations, repository                                                                                                      | no                     | no                  |
-| `src/infrastructure/seed/`        | Idempotent synthetic fixtures                                                                                                                       | no                     | no                  |
-| `src/infrastructure/platform/`    | System clock and id generation                                                                                                                      | no                     | no                  |
-| `src/main/`                       | Window, composition root, IPC registration                                                                                                          | no                     | **yes**             |
-| `src/preload/`                    | The narrow typed bridge                                                                                                                             | no                     | **yes**             |
-| `src/renderer/`                   | React UI. No Node, no filesystem, no SDK                                                                                                            | no                     | no                  |
-| `src/shared/`                     | IPC channel names, request schemas, the API type                                                                                                    | no                     | no                  |
+| Ruta                              | Responsabilidad                                                                                                                                                                 | ¿Puede importar `@qvac/sdk`? | ¿Puede importar Electron? |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------- |
+| `src/domain/`                     | Entidades, objetos de valor y reglas puras: normalización, derivación de antigüedad e instalación, puntuación de confianza, puntuación de duplicados, selección de seguimientos | no                           | no                        |
+| `src/application/contracts/`      | Esquemas de Zod y tipos de vista que cruzan la frontera, incluyendo el esquema de extracción                                                                                    | no                           | no                        |
+| `src/application/ports/`          | Interfaces que la infraestructura debe implementar: extracción, repositorios, reloj, ids, voz a texto                                                                           | no                           | no                        |
+| `src/application/prompts/`        | El prompt del sistema de extracción y el constructor de prompts                                                                                                                 | no                           | no                        |
+| `src/application/use-cases/`      | `CaptureWorkflowService` e `InstalledBaseQueryService`                                                                                                                          | no                           | no                        |
+| `src/infrastructure/qvac/`        | El adaptador de QVAC, el único punto de llamada al SDK                                                                                                                          | **sí**                       | no                        |
+| `src/infrastructure/mock/`        | El adaptador determinista del Mock de desarrollo                                                                                                                                | no                           | no                        |
+| `src/infrastructure/persistence/` | Base de datos `node:sqlite`, migraciones, repositorio                                                                                                                           | no                           | no                        |
+| `src/infrastructure/seed/`        | Fixtures sintéticos idempotentes                                                                                                                                                | no                           | no                        |
+| `src/infrastructure/platform/`    | Reloj del sistema y generación de ids                                                                                                                                           | no                           | no                        |
+| `src/main/`                       | Ventana, composition root, registro de IPC                                                                                                                                      | no                           | **sí**                    |
+| `src/preload/`                    | El puente tipado acotado                                                                                                                                                        | no                           | **sí**                    |
+| `src/renderer/`                   | UI de React. Sin Node, sin sistema de archivos, sin SDK                                                                                                                         | no                           | no                        |
+| `src/shared/`                     | Nombres de canales IPC, esquemas de solicitud, el tipo de la API                                                                                                                | no                           | no                        |
 
-Prompts and the extraction schema live in the application layer on purpose. They describe what
-the business wants extracted, not how an engine is invoked, so swapping engines must not
-rewrite them. See [QVAC_ARCHITECTURE.md](QVAC_ARCHITECTURE.md) for the QVAC-specific rules and
-[DATA_SCHEMA.md](DATA_SCHEMA.md) for what the records mean.
+Los prompts y el esquema de extracción viven deliberadamente en la capa de aplicación. Describen
+qué quiere extraer el negocio, no cómo se invoca un motor, de modo que cambiar de motor no debe
+reescribirlos. Ver [QVAC_ARCHITECTURE.md](QVAC_ARCHITECTURE.md) para las reglas específicas de QVAC y
+[DATA_SCHEMA.md](DATA_SCHEMA.md) para el significado de los registros.
 
-## Not implemented — PLANNED
+## No implementado — PLANIFICADO
 
-Marked here so nothing in this document is read as describing working code.
+Se marca aquí para que nada en este documento se lea como una descripción de código funcional.
 
-- **Voice capture and speech-to-text.** `SpeechToTextPort` exists in
-  `src/application/ports/platform.ts` with no implementation. `EvidenceSource` includes `Voice`
-  and the database accepts it, but no adapter produces it. The UI labels voice unavailable.
-- **Photo evidence and OCR.** `Photo` is likewise typed and unimplemented.
-- **A shared QVAC runtime owner.** One adapter manages the worker and model today. A shared
-  owner is recommended in QVAC_ARCHITECTURE.md but should not be built before a second
-  capability exists.
-- **Freshness and aging policy.** Elapsed days are computed; classification stays unknown
-  because no business thresholds were supplied.
-- **Natural-language analytics, authentication, multi-user sync, automatic entity merging,
-  model packaging, production installers.** All outside this vertical slice.
-- **Database encryption at rest.** See [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) and
-  decision 14 in [DECISIONS.md](DECISIONS.md).
+- **Captura de voz y voz a texto.** `SpeechToTextPort` existe en
+  `src/application/ports/platform.ts` sin implementación. `EvidenceSource` incluye `Voice`
+  y la base de datos lo acepta, pero ningún adaptador lo produce. La interfaz etiqueta la voz como no disponible.
+- **Evidencia fotográfica y OCR.** `Photo` está igualmente tipado y sin implementar.
+- **Un propietario compartido del runtime de QVAC.** Hoy un solo adaptador gestiona el worker y el modelo. Se recomienda un
+  propietario compartido en QVAC_ARCHITECTURE.md, pero no debería construirse antes de que exista una segunda
+  capacidad.
+- **Política de vigencia y antigüedad.** Se calculan los días transcurridos; la clasificación permanece
+  desconocida porque no se suministraron umbrales de negocio.
+- **Analítica en lenguaje natural, autenticación, sincronización multiusuario, fusión automática de
+  entidades, empaquetado de modelos, instaladores de producción.** Todo queda fuera de este corte vertical.
+- **Cifrado de la base de datos en reposo.** Ver [PRIVACY_OFFLINE.md](PRIVACY_OFFLINE.md) y
+  la decisión 14 en [DECISIONS.md](DECISIONS.md).

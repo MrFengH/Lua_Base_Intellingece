@@ -1,153 +1,153 @@
-# QVAC architecture
+# Arquitectura de QVAC
 
-How QVAC participates in this application, and the rules that keep it contained.
+Cómo participa QVAC en esta aplicación, y las reglas que lo mantienen contenido.
 
-For the compliance inventory (SDK version, plugin, model, structured output, network posture)
-see [QVAC_COMPLIANCE.md](QVAC_COMPLIANCE.md). For the overall system shape see
-[ARCHITECTURE.md](ARCHITECTURE.md). This document covers placement, boundaries, and lifecycle.
+Para el inventario de cumplimiento (versión del SDK, plugin, modelo, salida estructurada, postura
+de red) ver [QVAC_COMPLIANCE.md](QVAC_COMPLIANCE.md). Para la forma general del sistema ver
+[ARCHITECTURE.md](ARCHITECTURE.md). Este documento cubre ubicación, fronteras y ciclo de vida.
 
-## Where QVAC is allowed to live
+## Dónde puede vivir QVAC
 
 ```mermaid
 flowchart TB
-  R[Renderer<br/>React] -->|typed preload| I[IPC handlers<br/>Zod validated]
+  R[Renderer<br/>React] -->|preload tipado| I[Handlers de IPC<br/>validados con Zod]
   I --> W[CaptureWorkflowService<br/>application]
-  I --> VT[voice-transcription.ts<br/>main, temp-file lifecycle only]
+  I --> VT[voice-transcription.ts<br/>main, solo ciclo de vida de archivo temporal]
   W --> P[[ObservationExtractionPort<br/>application/ports]]
   VT --> ST[[SpeechToTextPort<br/>application/ports]]
-  P -. implemented by .-> Q[QvacObservationExtractionService<br/>infrastructure/qvac]
-  P -. implemented by .-> M[DevelopmentMockObservationExtractionService<br/>infrastructure/mock]
-  ST -. implemented by .-> QS[QvacSpeechToTextService<br/>infrastructure/qvac]
-  ST -. implemented by .-> MS[DevelopmentMockSpeechToTextService<br/>infrastructure/mock]
+  P -. implementado por .-> Q[QvacObservationExtractionService<br/>infrastructure/qvac]
+  P -. implementado por .-> M[DevelopmentMockObservationExtractionService<br/>infrastructure/mock]
+  ST -. implementado por .-> QS[QvacSpeechToTextService<br/>infrastructure/qvac]
+  ST -. implementado por .-> MS[DevelopmentMockSpeechToTextService<br/>infrastructure/mock]
   Q --> SDK([&#64;qvac/sdk])
   QS --> SDK
-  W --> D[Domain rules]
+  W --> D[Reglas de dominio]
 
   style Q fill:#fff3cd,stroke:#856404
   style QS fill:#fff3cd,stroke:#856404
   style SDK fill:#f8d7da,stroke:#721c24
 ```
 
-**Only `src/infrastructure/qvac/**` may import `@qvac/sdk`.** Everything above it depends on
-`ObservationExtractionPort` or `SpeechToTextPort`. This is the rule that makes the mock, the
-tests, and any future engine possible, and it is checked by the `qvac-review` skill.
+**Solo `src/infrastructure/qvac/**` puede importar `@qvac/sdk`.** Todo lo que está por encima depende de
+`ObservationExtractionPort` o `SpeechToTextPort`. Esta es la regla que hace posible el mock, las
+pruebas y cualquier motor futuro, y la verifica la skill `qvac-review`.
 
-A quick audit:
+Una auditoría rápida:
 
 ```bash
 grep -rln "@qvac/sdk" src/
-# expected: only files under src/infrastructure/qvac/
-#   (qvac-observation-extraction.ts and qvac-speech-to-text.ts as of the voice capability)
+# esperado: solo archivos bajo src/infrastructure/qvac/
+#   (qvac-observation-extraction.ts y qvac-speech-to-text.ts a partir de la capacidad de voz)
 ```
 
-## Composition
+## Composición
 
-`src/main/composition-root.ts` is the only place that decides which implementation is
-constructed. It reads `CIB_INFERENCE_MODE`, defaulting to `mock` in an unpackaged development
-run and `qvac` in a packaged one. Nothing else in the application knows which engine is active;
-it only reads the runtime info contract.
+`src/main/composition-root.ts` es el único lugar que decide qué implementación se
+construye. Lee `CIB_INFERENCE_MODE`, cuyo valor por defecto es `mock` en una ejecución de
+desarrollo sin empaquetar y `qvac` en una empaquetada. Nada más en la aplicación sabe qué motor está
+activo; solo lee el contrato de información de runtime.
 
-## Runtime and worker
+## Runtime y worker
 
-`heartbeat()` starts or verifies the local QVAC worker. The worker loads only the plugins
-listed in `qvac.config.json`, currently just `@qvac/sdk/llamacpp-completion/plugin`. The worker
-runs in the Electron main process side of the boundary, never in the renderer. The renderer has
-`contextIsolation` on, `nodeIntegration` off, and `sandbox` on, so it cannot reach the SDK even
-in principle.
+`heartbeat()` inicia o verifica el worker local de QVAC. El worker carga solo los plugins
+listados en `qvac.config.json`, actualmente solo `@qvac/sdk/llamacpp-completion/plugin`. El worker
+se ejecuta en el lado del proceso principal de Electron de la frontera, nunca en el renderer. El renderer tiene
+`contextIsolation` activado, `nodeIntegration` desactivado y `sandbox` activado, de modo que no puede alcanzar el SDK
+ni siquiera en principio.
 
-## Model lifecycle
+## Ciclo de vida del modelo
 
-The full sequence, as implemented in `QvacObservationExtractionService`:
+La secuencia completa, tal como está implementada en `QvacObservationExtractionService`:
 
-| Phase          | Call                              | Runtime status shown to the user           |
-| -------------- | --------------------------------- | ------------------------------------------ |
-| Idle           | none                              | `model-not-loaded`                         |
-| Start runtime  | `heartbeat()`                     | `loading`                                  |
-| Acquire model  | `loadModel({ ... onProgress })`   | `downloading` with percent, then `loading` |
-| Verify handler | `getLoadedModelInfo({ modelId })` | `loading`                                  |
-| Ready          | —                                 | `ready`                                    |
-| Inference      | `completion({ ... })`             | `processing`, then back to `ready`         |
-| Failure        | —                                 | `error` with the message                   |
-| Shutdown       | `unloadModel({ modelId })`        | `model-not-loaded`                         |
+| Fase              | Llamada                           | Estado de runtime mostrado al usuario         |
+| ----------------- | --------------------------------- | --------------------------------------------- |
+| Inactivo          | ninguna                           | `model-not-loaded`                            |
+| Iniciar runtime   | `heartbeat()`                     | `loading`                                     |
+| Adquirir modelo   | `loadModel({ ... onProgress })`   | `downloading` con porcentaje, luego `loading` |
+| Verificar handler | `getLoadedModelInfo({ modelId })` | `loading`                                     |
+| Listo             | —                                 | `ready`                                       |
+| Inferencia        | `completion({ ... })`             | `processing`, luego vuelve a `ready`          |
+| Fallo             | —                                 | `error` con el mensaje                        |
+| Apagado           | `unloadModel({ modelId })`        | `model-not-loaded`                            |
 
-Rules:
+Reglas:
 
-- **Initialization is explicit.** The user asks for it. It never happens as a hidden side
-  effect of typing.
-- **Load once, reuse.** `initialize()` returns early if `modelId` is already set. Loading per
-  request would be a defect.
-- **Unload on disposal.** `dispose()` unloads and is wired into the composition root's
-  `dispose()`, which the main process calls on `before-quit`.
-- **One model at a time** for now. A second resident model needs a measured RAM figure and an
-  entry in [MODEL_STRATEGY.md](MODEL_STRATEGY.md).
+- **La inicialización es explícita.** El usuario la solicita. Nunca ocurre como un efecto
+  secundario oculto de escribir.
+- **Cargar una vez, reutilizar.** `initialize()` retorna anticipadamente si `modelId` ya está definido. Cargar por
+  cada solicitud sería un defecto.
+- **Descargar al liberar recursos.** `dispose()` descarga el modelo y está conectado al `dispose()` del composition root,
+  al que llama el proceso principal en `before-quit`.
+- **Un modelo a la vez**, por ahora. Un segundo modelo residente necesita una cifra de RAM medida y una
+  entrada en [MODEL_STRATEGY.md](MODEL_STRATEGY.md).
 
 ## Streaming
 
-`completion` is called with `stream: true`. The adapter drains `run.events` and then awaits
-`run.final`. Draining is part of the lifecycle, not an optimisation.
+`completion` se llama con `stream: true`. El adaptador drena `run.events` y luego espera
+`run.final`. Drenar es parte del ciclo de vida, no una optimización.
 
-Token deltas are deliberately **not** surfaced to the UI and **not** logged. The output is a
-JSON document, so a partially streamed object has no useful intermediate rendering, and logging
-deltas would write hospital observation content to disk. If incremental UI feedback is wanted
-later, stream a progress signal, not content.
+Los deltas de tokens deliberadamente **no** se muestran en la interfaz y **no** se registran en logs. La salida es un
+documento JSON, así que un objeto parcialmente transmitido no tiene una representación intermedia útil, y
+registrar los deltas escribiría contenido de observaciones hospitalarias en disco. Si más adelante se desea
+retroalimentación incremental en la interfaz, transmita una señal de progreso, no contenido.
 
-## Failure handling
+## Manejo de fallos
 
-- Initialization failure clears `modelId`, sets `error` with the message, and rethrows. The
-  application does not retry silently.
-- Inference failure sets `error` and rethrows.
-- **There is no fallback to the development mock.** The engine identity the UI displays is
-  always the engine that actually ran. This is a hard rule; a silent downgrade would make every
-  screenshot and every saved record untrustworthy.
-- Prefer the SDK's exported error types (`ContextOverflowError`, `WorkerCrashedError`,
-  `InferenceCancelledError`, and the `SDK_*_ERROR_CODES` maps) over matching message strings.
+- Un fallo de inicialización limpia `modelId`, establece `error` con el mensaje, y relanza la excepción. La
+  aplicación no reintenta silenciosamente.
+- Un fallo de inferencia establece `error` y relanza la excepción.
+- **No existe respaldo hacia el mock de desarrollo.** La identidad del motor que muestra la interfaz es
+  siempre el motor que realmente se ejecutó. Esta es una regla estricta; una degradación silenciosa haría que
+  cada captura de pantalla y cada registro guardado fueran poco confiables.
+- Prefiera los tipos de error exportados por el SDK (`ContextOverflowError`, `WorkerCrashedError`,
+  `InferenceCancelledError`, y los mapas `SDK_*_ERROR_CODES`) antes que comparar cadenas de mensaje.
 
-## Separation of business code and QVAC code
+## Separación entre código de negocio y código de QVAC
 
-| Concern           | Lives in                                  | May import `@qvac/sdk`          |
-| ----------------- | ----------------------------------------- | ------------------------------- |
-| Prompts           | `src/application/prompts/`                | no                              |
-| Extraction schema | `src/application/contracts/extraction.ts` | no                              |
-| Port definition   | `src/application/ports/`                  | no                              |
-| Workflow rules    | `src/application/use-cases/`              | no                              |
-| Domain rules      | `src/domain/`                             | no                              |
-| QVAC adapter      | `src/infrastructure/qvac/`                | **yes**                         |
-| Mock adapter      | `src/infrastructure/mock/`                | no                              |
-| Wiring            | `src/main/composition-root.ts`            | no, constructs the adapter only |
+| Aspecto               | Vive en                                   | ¿Puede importar `@qvac/sdk`?    |
+| --------------------- | ----------------------------------------- | ------------------------------- |
+| Prompts               | `src/application/prompts/`                | no                              |
+| Esquema de extracción | `src/application/contracts/extraction.ts` | no                              |
+| Definición de puertos | `src/application/ports/`                  | no                              |
+| Reglas del flujo      | `src/application/use-cases/`              | no                              |
+| Reglas de dominio     | `src/domain/`                             | no                              |
+| Adaptador de QVAC     | `src/infrastructure/qvac/`                | **sí**                          |
+| Adaptador mock        | `src/infrastructure/mock/`                | no                              |
+| Cableado              | `src/main/composition-root.ts`            | no, solo construye el adaptador |
 
-Prompts and schemas sit in the application layer on purpose: they describe what the business
-wants extracted, not how a particular engine is called. Swapping engines must not rewrite them.
+Los prompts y los esquemas viven deliberadamente en la capa de aplicación: describen qué
+quiere extraer el negocio, no cómo se invoca un motor en particular. Cambiar de motor no debe reescribirlos.
 
-## Adding a new QVAC capability
+## Cómo agregar una nueva capacidad de QVAC
 
-Voice capture (speech to text) followed this shape and is now implemented:
+La captura de voz (voz a texto) siguió esta forma y ya está implementada:
 
-1. A port in `src/application/ports/`. `SpeechToTextPort` (`platform.ts`) mirrors
-   `ObservationExtractionPort`'s lifecycle (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
-2. An adapter in `src/infrastructure/qvac/qvac-speech-to-text.ts` implementing it, plus
-   `DevelopmentMockSpeechToTextService` in `src/infrastructure/mock/` for dev/test parity with the
-   extraction capability.
-3. The plugin the engine needs, `@qvac/sdk/whispercpp-transcription/plugin`, added to
-   `qvac.config.json` alongside the existing completion plugin — no other plugin was enabled.
-4. Its own model lifecycle: loaded lazily on first use rather than eagerly, unloaded on
-   application disposal. **Not yet satisfied:** coexistence with the completion model has not
-   been measured for RAM — see `docs/MODEL_STRATEGY.md`'s Capability 2 "Open questions".
+1. Un puerto en `src/application/ports/`. `SpeechToTextPort` (`platform.ts`) refleja
+   el ciclo de vida de `ObservationExtractionPort` (`initialize`/`getRuntimeInfo`/`transcribe`/`dispose`).
+2. Un adaptador en `src/infrastructure/qvac/qvac-speech-to-text.ts` que lo implementa, más
+   `DevelopmentMockSpeechToTextService` en `src/infrastructure/mock/` para paridad de desarrollo/pruebas con la
+   capacidad de extracción.
+3. El plugin que el motor necesita, `@qvac/sdk/whispercpp-transcription/plugin`, añadido a
+   `qvac.config.json` junto al plugin de completado ya existente — no se habilitó ningún otro plugin.
+4. Su propio ciclo de vida de modelo: cargado de forma diferida en el primer uso en lugar de anticipadamente, descargado al
+   liberar recursos de la aplicación. **Aún no satisfecho:** la coexistencia con el modelo de completado no se ha
+   medido en cuanto a RAM — ver "Preguntas abiertas" de la Capacidad 2 en `docs/MODEL_STRATEGY.md`.
 
-The next capability should follow the same shape. Do not add a second direct SDK call site
-elsewhere in the app.
+La próxima capacidad debería seguir la misma forma. No agregue un segundo punto de llamada directo al SDK
+en otro lugar de la aplicación.
 
-## Recommendation, not yet implemented
+## Recomendación, aún no implementada
 
-**PLANNED — a shared QVAC runtime owner.** The second capability has now arrived:
-`QvacObservationExtractionService` and `QvacSpeechToTextService` each independently call
-`heartbeat()`, `loadModel`, and `unloadModel`, exactly the duplication this section anticipated.
-`heartbeat()` itself is idempotent (it starts-or-verifies one worker), so this is not currently a
-correctness bug, but model residency is now tracked in two places with no shared view — which is
-also why the RAM-coexistence question in `docs/MODEL_STRATEGY.md` remains open. The recommended
-shape is still a small `QvacRuntime` object in `src/infrastructure/qvac/` that owns worker
-startup, a registry of loaded model ids, and disposal, with each capability adapter borrowing a
-model from it.
+**PLANIFICADO — un propietario compartido del runtime de QVAC.** La segunda capacidad ya llegó:
+`QvacObservationExtractionService` y `QvacSpeechToTextService` cada uno llama de forma independiente a
+`heartbeat()`, `loadModel` y `unloadModel`, exactamente la duplicación que anticipaba esta sección.
+`heartbeat()` en sí es idempotente (inicia o verifica un único worker), así que esto no es actualmente un
+defecto de corrección, pero la residencia del modelo ahora se rastrea en dos lugares sin una vista compartida — que es
+también por qué la pregunta de coexistencia de RAM en `docs/MODEL_STRATEGY.md` sigue abierta. La forma
+recomendada sigue siendo un pequeño objeto `QvacRuntime` en `src/infrastructure/qvac/` que posea el arranque
+del worker, un registro de ids de modelos cargados, y la liberación de recursos, con cada adaptador de capacidad tomando prestado
+un modelo de él.
 
-This was not built as part of adding voice: doing so would have mixed a refactor into a feature
-change. Build it the next time a third capability is added, or sooner if the RAM question above
-is measured and turns out to require coordinated unloading.
+Esto no se construyó como parte de agregar la voz: hacerlo habría mezclado una refactorización con un cambio
+de funcionalidad. Constrúyalo la próxima vez que se agregue una tercera capacidad, o antes si la pregunta de RAM de
+arriba se mide y resulta requerir una descarga coordinada.

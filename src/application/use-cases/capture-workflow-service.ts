@@ -378,6 +378,17 @@ export class CaptureWorkflowService {
       } as const);
     const userMessages = session.messages.filter((message) => message.role === 'User');
     const evidenceIds = userMessages.map((message) => message.id);
+    /** The assistant question a user message answered, if any — display context for the
+     * evidence log, kept as metadata rather than a domain field. Mirrors the convention already
+     * established by the development seed's `followUpQuestion` metadata key. */
+    const followUpQuestionByMessageId = new Map<string, string>();
+    session.messages.forEach((message, index) => {
+      if (message.role !== 'User') return;
+      const preceding = index > 0 ? session.messages[index - 1] : null;
+      if (preceding?.role === 'Assistant') {
+        followUpQuestionByMessageId.set(message.id, preceding.content);
+      }
+    });
     const equipment = session.draft.equipment.map((item) =>
       this.toEquipmentObservation(
         item,
@@ -405,13 +416,17 @@ export class CaptureWorkflowService {
           country,
         },
         evidence: [
-          ...userMessages.map((message) => ({
-            id: message.id,
-            sessionId: session.id,
-            source: session.source,
-            capturedAt: message.createdAt,
-            rawText: message.content,
-          })),
+          ...userMessages.map((message) => {
+            const followUpQuestion = followUpQuestionByMessageId.get(message.id);
+            return {
+              id: message.id,
+              sessionId: session.id,
+              source: session.source,
+              capturedAt: message.createdAt,
+              rawText: message.content,
+              ...(followUpQuestion ? { metadata: { followUpQuestion } } : {}),
+            };
+          }),
           ...session.corrections,
         ],
       },

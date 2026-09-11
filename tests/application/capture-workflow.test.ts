@@ -309,6 +309,47 @@ describe('CaptureWorkflowService', () => {
     }
   });
 
+  it('keeps the assistant follow-up question as display context for the answer, never as observed evidence', async () => {
+    const { database, repository, service } = createHarness();
+    try {
+      const started = service.start({
+        observerId: 'new-observer',
+        observedAt: '2026-09-08T12:00:00Z',
+      });
+      const extracted = await service.submitMessage(
+        started.id,
+        'I am at Hospital DemoCare Pacific in Panama. They have two MR systems and one CT.',
+      );
+      expect(extracted.pendingQuestion?.field).toBe('Manufacturer');
+      const followUpQuestionText = extracted.pendingQuestion?.text;
+      expect(followUpQuestionText).toBeTruthy();
+
+      await service.submitMessage(started.id, 'Siemens.');
+      // proceedToReview skips any remaining optional follow-ups; this test only cares that the
+      // one answer given is paired with the exact question it actually answered.
+      service.proceedToReview(started.id);
+      service.confirmReview(started.id);
+      const saved = service.save(started.id);
+      expect(saved.capture.draft.state).toBe('SAVED');
+
+      const view = repository.getCustomer360(saved.customerId, '2026-09-08T12:00:00Z');
+      const sessionEvidence = view?.evidence.find((item) => item.sessionId === started.id);
+      const items = sessionEvidence?.items ?? [];
+      expect(items.length).toBeGreaterThan(0);
+
+      // The original free-text observation answered no question, so it carries no context.
+      const initial = items.find((item) => item.rawText?.includes('two MR systems'));
+      expect(initial?.followUpQuestion).toBeNull();
+
+      // The short follow-up answer is paired with the exact question it answered, as context
+      // only — the answer's own text ("Siemens.") remains the only evidence value.
+      const answer = items.find((item) => item.rawText === 'Siemens.');
+      expect(answer?.followUpQuestion).toBe(followUpQuestionText);
+    } finally {
+      database.close();
+    }
+  });
+
   it.each([
     'no lo sé',
     'no lo se',

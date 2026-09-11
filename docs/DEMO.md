@@ -14,7 +14,7 @@ también. Para contexto técnico en inglés, ver [README.md](../README.md).
   Espere a que **Inicializar modelo local** complete y el badge muestre **Listo** al menos una vez.
   Después de esto, el modelo ya está en caché y no vuelve a descargarse.
 - [ ] Fallback listo si el 4B es demasiado lento en la máquina de demo: `$env:CIB_QVAC_MODEL = '600m'`
-      (ver [README.md#selecting-the-demo-model](../README.md#recommended-model-for-the-demo)).
+      (ver [README.md#modelo-recomendado-para-la-demo](../README.md#modelo-recomendado-para-la-demo)).
 - [ ] Base de datos en un estado apropiado para la demo (recién sembrada, o con el estado que
       quiera mostrar en Customer 360/Dashboard). `npm run seed` la reinicializa de forma idempotente.
 - [ ] La app abierta y en la pantalla **Capturar**, con el badge de motor de inferencia visible.

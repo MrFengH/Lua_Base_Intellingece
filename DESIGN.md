@@ -251,8 +251,11 @@ the build.
 ### Inputs / Fields
 
 - **Style:** 1px `--line-strong` border, `3px` radius, white/`--surface` background, 8px padding.
-- **Focus:** no custom focus ring observed beyond browser default; the composer textarea is
-  borderless inside its own bordered container.
+- **Focus:** the composer container carries a custom focus treatment on `:focus-within` — a
+  full `--accent` border plus a 2px `--accent` outline (1px offset) — since the textarea itself
+  has no border of its own. Other standalone bordered inputs (e.g. the equipment edit fields)
+  still rely on the browser's default focus ring; this is a gap for a future harden pass, not a
+  second focus vocabulary.
 - **Disabled:** buttons drop to `0.5` opacity and `cursor: not-allowed`.
 
 ### Navigation
@@ -281,6 +284,22 @@ The bordered ledger panel — facility letterhead block, gridded equipment table
 stamps, and full bordered contradiction notices (not colored-bar callouts) — is the document-grade
 counterpart to the plain transcript log. Contradictions render as a complete bordered/tinted block
 with an icon and bold lead-in, never as a thin colored sidebar accent.
+
+Each ledger row is a native disclosure (`<details>`/`<summary>`) rather than a custom accordion:
+clicking anywhere in the row, or its uppercase `Ver detalles` label and rotating chevron, reveals
+per-field provenance and a plain-language status sentence, keeping full keyboard operability for
+free. The evidence-of-record log beneath the ledger renders each raw observation as plain prose
+when it is the original free-text account, or as a `Pregunta` / `Respuesta` pair — in the same
+uppercase Label register used everywhere else — when the entry is a deterministic follow-up
+answer. The assistant's question is shown only as muted (`--ink-tertiary`) interpretive context,
+never in the observer's own visual register.
+
+### Named Rules (optional)
+
+**The Context, Not Evidence Rule.** An assistant-generated follow-up question may be shown
+alongside the answer it received, but only as muted context (`Pregunta`, `--ink-tertiary`) — never
+in the same visual register as the observer's own words, and never styled as if it were evidence
+in its own right.
 
 ## Do's and Don'ts
 

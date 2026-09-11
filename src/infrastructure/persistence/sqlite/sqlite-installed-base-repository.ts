@@ -1,6 +1,7 @@
 import type {
   ApproximateAge,
   ConfidenceAssessment,
+  ConfidenceLevel,
   Customer,
   DuplicateCandidate,
   DuplicateComparableObservation,
@@ -11,14 +12,26 @@ import type {
   ResolvedDuplicateResolution,
   SavedObservationAggregate,
 } from '@/domain';
-import { normalizeName } from '@/domain';
+import {
+  AGE_BAND_INDETERMINATE_LABEL,
+  AGE_BAND_LABELS,
+  AGE_BAND_UNKNOWN_LABEL,
+  classifyAgeBand,
+  CONFIDENCE_LEVELS,
+  normalizeName,
+  OBSERVATION_STATUSES,
+} from '@/domain';
 import type {
+  AgeBandCount,
   Customer360View,
   CustomerListItem,
+  CountryEquipmentCount,
   DashboardView,
   DuplicateCandidateReview,
   DuplicateReviewObservation,
+  FieldEnrichmentGap,
   InstalledBaseItem,
+  ObservationEvidenceEntryView,
   ObservationEvidenceView,
 } from '@/application/contracts';
 import type { InstalledBaseRepository } from '@/application/ports';
@@ -241,6 +254,31 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
          GROUP BY os.id, eo.id ORDER BY os.observed_at DESC`,
       )
       .all(customerId) as Row[];
+    const itemRows = this.database.connection
+      .prepare(
+        `SELECT ei.session_id, ei.id, ei.raw_text, ei.captured_at, ei.metadata_json
+         FROM evidence_items ei
+         JOIN observation_sessions os ON os.id = ei.session_id
+         WHERE os.customer_id = ?
+         ORDER BY ei.captured_at ASC`,
+      )
+      .all(customerId) as Row[];
+    const itemsBySession = new Map<string, ObservationEvidenceEntryView[]>();
+    itemRows.forEach((row) => {
+      const sessionId = stringValue(row, 'session_id');
+      const metadata = row.metadata_json
+        ? parseJson<Record<string, unknown>>(row.metadata_json)
+        : null;
+      const followUpQuestion =
+        metadata && typeof metadata.followUpQuestion === 'string' ? metadata.followUpQuestion : null;
+      const entry: ObservationEvidenceEntryView = {
+        id: stringValue(row, 'id'),
+        rawText: nullableString(row, 'raw_text'),
+        followUpQuestion,
+        capturedAt: stringValue(row, 'captured_at'),
+      };
+      itemsBySession.set(sessionId, [...(itemsBySession.get(sessionId) ?? []), entry]);
+    });
     const evidence: ObservationEvidenceView[] = evidenceRows.map((row) => ({
       sessionId: stringValue(row, 'session_id'),
       equipmentObservationId: stringValue(row, 'equipment_observation_id'),
@@ -249,6 +287,7 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       visitId: stringValue(row, 'visit_id'),
       rawInput: nullableString(row, 'raw_input'),
       source: stringValue(row, 'sources'),
+      items: itemsBySession.get(stringValue(row, 'session_id')) ?? [],
     }));
     const duplicateReviews = this.listForCustomer(customerId).map((candidate) =>
       this.duplicateCandidateReview(candidate),
@@ -276,21 +315,77 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
       this.getCustomer360(customer.id, now),
     );
     const installedBase = customerViews.flatMap((view) => view?.installedBase ?? []);
+
     const equipmentByModality: Record<string, number> = {};
+    const equipmentByStatus = Object.fromEntries(
+      OBSERVATION_STATUSES.map((status) => [status, 0]),
+    ) as Record<ObservationStatus, number>;
+    const equipmentByConfidence = Object.fromEntries(
+      CONFIDENCE_LEVELS.map((level) => [level, 0]),
+    ) as Record<ConfidenceLevel, number>;
+    const ageBandTotals = new Map<string, number>(AGE_BAND_LABELS.map((label) => [label, 0]));
+    const enrichmentFields = ['manufacturer', 'model', 'approximateAge', 'quantity'] as const;
+    const fieldTotals = new Map<
+      FieldEnrichmentGap['field'],
+      { missing: number; declaredUnknown: number }
+    >(enrichmentFields.map((field) => [field, { missing: 0, declaredUnknown: 0 }]));
+    let ageKnown = 0;
+    let ageUnknown = 0;
+
     installedBase.forEach((item) => {
-      equipmentByModality[item.modality] =
-        (equipmentByModality[item.modality] ?? 0) + (item.quantity ?? 0);
+      const quantity = item.quantity ?? 0;
+      equipmentByModality[item.modality] = (equipmentByModality[item.modality] ?? 0) + quantity;
+      equipmentByStatus[item.status] += quantity;
+      equipmentByConfidence[item.confidence.level] += quantity;
+
+      if (item.approximateAge.type === 'unknown') {
+        ageUnknown += quantity;
+      } else {
+        ageKnown += quantity;
+      }
+      const classification = classifyAgeBand(item.approximateAge);
+      const bandLabel =
+        classification.kind === 'known'
+          ? classification.label
+          : classification.kind === 'indeterminate'
+            ? AGE_BAND_INDETERMINATE_LABEL
+            : AGE_BAND_UNKNOWN_LABEL;
+      ageBandTotals.set(bandLabel, (ageBandTotals.get(bandLabel) ?? 0) + quantity);
+
+      enrichmentFields.forEach((field) => {
+        const knowledgeState = item.fieldProvenance[field]?.knowledgeState;
+        const totals = fieldTotals.get(field);
+        if (!totals) return;
+        if (knowledgeState === 'Missing') totals.missing += 1;
+        if (knowledgeState === 'DeclaredUnknown') totals.declaredUnknown += 1;
+      });
     });
-    const countryRows = this.database.connection
+
+    const equipmentCountByCountry = new Map<string, number>();
+    customerViews.forEach((view) => {
+      if (!view) return;
+      const country = view.customer.country ?? 'Unknown';
+      const quantity = view.installedBase.reduce((sum, item) => sum + (item.quantity ?? 0), 0);
+      equipmentCountByCountry.set(country, (equipmentCountByCountry.get(country) ?? 0) + quantity);
+    });
+    const visitRows = this.database.connection
       .prepare(
         `SELECT COALESCE(c.country, 'Unknown') AS country, COUNT(os.id) AS count
          FROM customers c LEFT JOIN observation_sessions os ON os.customer_id = c.id
          GROUP BY COALESCE(c.country, 'Unknown')`,
       )
       .all() as Row[];
-    const observationsByCountry = Object.fromEntries(
-      countryRows.map((row) => [stringValue(row, 'country'), numericValue(row, 'count')]),
+    const visitCountByCountry = new Map(
+      visitRows.map((row) => [stringValue(row, 'country'), numericValue(row, 'count')]),
     );
+    const equipmentByCountry: CountryEquipmentCount[] = [...equipmentCountByCountry.entries()]
+      .map(([country, equipmentCount]) => ({
+        country,
+        equipmentCount,
+        visitCount: visitCountByCountry.get(country) ?? 0,
+      }))
+      .sort((a, b) => b.equipmentCount - a.equipmentCount);
+
     const incomplete = this.database.connection
       .prepare(
         `SELECT COUNT(*) AS count FROM equipment_observations
@@ -298,14 +393,31 @@ export class SqliteInstalledBaseRepository implements InstalledBaseRepository {
             OR model IS NULL OR json_extract(approximate_age_json, '$.type') = 'unknown'`,
       )
       .get() as Row;
+    const pendingDuplicates = this.database.connection
+      .prepare(`SELECT COUNT(*) AS count FROM duplicate_candidates WHERE resolution = 'Unresolved'`)
+      .get() as Row;
+
+    const ageBands: AgeBandCount[] = AGE_BAND_LABELS.map((label) => ({
+      label,
+      count: ageBandTotals.get(label) ?? 0,
+    }));
+    const fieldEnrichmentGaps: FieldEnrichmentGap[] = enrichmentFields
+      .map((field) => ({ field, ...(fieldTotals.get(field) ?? { missing: 0, declaredUnknown: 0 }) }))
+      .sort((a, b) => b.missing - a.missing);
+
     return {
       totalCustomers: customerViews.length,
       totalEquipmentObserved: installedBase.reduce((sum, item) => sum + (item.quantity ?? 0), 0),
       equipmentByModality,
-      observationsByCountry,
-      agingEquipment: null,
+      equipmentByCountry,
+      equipmentByStatus,
+      equipmentByConfidence,
       incompleteObservations: numericValue(incomplete, 'count'),
-      agingPolicy: 'Not configured',
+      pendingDuplicateCandidates: numericValue(pendingDuplicates, 'count'),
+      ageKnown,
+      ageUnknown,
+      ageBands,
+      fieldEnrichmentGaps,
     };
   }
 

@@ -13,7 +13,7 @@ export class DevelopmentMockSpeechToTextService implements SpeechToTextPort {
   private readonly runtime: InferenceRuntimeInfo = {
     engine: 'Development Mock',
     execution: 'Development only',
-    model: 'Analizador de voz de fixture determinista',
+    model: 'Generador de datos de prueba (voz)',
     networkRequiredForInference: false,
     status: 'model-not-loaded',
     detail: 'No válido para la demo final de QVAC.',

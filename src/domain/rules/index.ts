@@ -1,3 +1,4 @@
+export * from './age-bands';
 export * from './contradiction';
 export * from './derive-installation';
 export * from './normalize-modality';

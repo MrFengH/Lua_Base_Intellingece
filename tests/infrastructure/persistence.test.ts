@@ -276,6 +276,58 @@ describe('Customer 360 exposes stored provenance and confidence (P3-S4)', () => 
       database.close();
     }
   });
+
+  it('keeps a historical evidence item without follow-up-question metadata valid and renders it plainly', () => {
+    const database = new LocalSqliteDatabase(':memory:');
+    try {
+      const repository = new SqliteInstalledBaseRepository(database);
+      const base = createDevelopmentSeed()[0]!;
+      const equipmentSource = base.equipment[0]!;
+      const legacyEvidenceId = 'test-evidence-no-metadata';
+      const equipment: EquipmentObservation = {
+        ...equipmentSource,
+        evidenceIds: [legacyEvidenceId],
+        confidence: { ...equipmentSource.confidence, evidenceIds: [legacyEvidenceId] },
+        fieldProvenance: Object.fromEntries(
+          Object.entries(equipmentSource.fieldProvenance).map(([field, provenance]) => [
+            field,
+            { ...provenance, evidenceIds: [legacyEvidenceId] },
+          ]),
+        ),
+      };
+      repository.saveAggregate(
+        {
+          ...base,
+          session: {
+            ...base.session,
+            evidence: [
+              {
+                id: legacyEvidenceId,
+                sessionId: base.session.id,
+                source: 'Text',
+                capturedAt: base.session.observedAt,
+                rawText: 'Two MR systems, brand not mentioned.',
+              },
+            ],
+          },
+          equipment: [equipment],
+        },
+        [],
+      );
+      const view = repository.getCustomer360(base.customer.id, '2026-09-09T00:00:00Z');
+      const sessionEvidence = view?.evidence.find((item) => item.sessionId === base.session.id);
+      expect(sessionEvidence?.items).toEqual([
+        {
+          id: legacyEvidenceId,
+          rawText: 'Two MR systems, brand not mentioned.',
+          followUpQuestion: null,
+          capturedAt: base.session.observedAt,
+        },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 const saveDuplicateReviewScenario = (

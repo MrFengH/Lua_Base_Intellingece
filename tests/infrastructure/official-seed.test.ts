@@ -206,14 +206,47 @@ describe('official seed through the projections', () => {
     try {
       const dashboard = repository.getDashboard(NOW);
       expect(dashboard.totalCustomers).toBe(13);
-      expect(Object.keys(dashboard.observationsByCountry)).toHaveLength(10);
+      expect(dashboard.equipmentByCountry).toHaveLength(10);
       expect(dashboard.equipmentByModality).toEqual({ MR: 15, CT: 12, Ultrasound: 23 });
       expect(dashboard.totalEquipmentObserved).toBe(50);
       // Every official row supplies modality, quantity, brand, model and an age.
       expect(dashboard.incompleteObservations).toBe(0);
-      // No freshness policy was supplied, and the official data does not imply one.
-      expect(dashboard.agingEquipment).toBeNull();
-      expect(dashboard.agingPolicy).toBe('Not configured');
+      expect(
+        dashboard.fieldEnrichmentGaps.every(
+          (gap) => gap.missing === 0 && gap.declaredUnknown === 0,
+        ),
+      ).toBe(true);
+      // Seeding never raises a duplicate candidate.
+      expect(dashboard.pendingDuplicateCandidates).toBe(0);
+
+      const equipmentByCountry = Object.fromEntries(
+        dashboard.equipmentByCountry.map((row) => [row.country, row.equipmentCount]),
+      );
+      const expectedByCountry = OFFICIAL_INSTALLED_BASE_RECORDS.reduce<Record<string, number>>(
+        (totals, record) => ({
+          ...totals,
+          [record.country]: (totals[record.country] ?? 0) + record.quantity,
+        }),
+        {},
+      );
+      expect(equipmentByCountry).toEqual(expectedByCountry);
+
+      // Every official age is a bare integer mapped to estimate(n, n), so every unit lands in a
+      // known band — decision 8's amendment: this is a descriptive distribution, not a policy.
+      expect(dashboard.ageUnknown).toBe(0);
+      expect(dashboard.ageKnown).toBe(50);
+      const bandLabelFor = (years: number): string =>
+        years <= 5 ? '0–5 años' : years <= 10 ? '6–10 años' : 'Más de 10 años';
+      const expectedBands = OFFICIAL_INSTALLED_BASE_RECORDS.reduce<Record<string, number>>(
+        (totals, record) => {
+          const label = bandLabelFor(record.approximateAgeYears);
+          return { ...totals, [label]: (totals[label] ?? 0) + record.quantity };
+        },
+        {},
+      );
+      dashboard.ageBands.forEach((band) => {
+        expect(band.count).toBe(expectedBands[band.label] ?? 0);
+      });
     } finally {
       database.close();
     }

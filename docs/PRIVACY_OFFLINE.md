@@ -1,166 +1,166 @@
-# Privacy and offline behaviour
+# Privacidad y comportamiento offline
 
-## Why this document exists
+## Por qué existe este documento
 
-Field colleagues record what they saw inside hospitals and clinics. That content can name a
-facility, describe its equipment, and identify who reported it. It may be recorded where
-connectivity is poor or absent. The architecture is local-first and privacy-first because both
-constraints are real, not aspirational.
+Los colegas de campo registran lo que vieron dentro de hospitales y clínicas. Ese contenido puede nombrar una
+instalación, describir su equipo, e identificar quién lo reportó. Puede registrarse donde la
+conectividad es escasa o nula. La arquitectura es local-first y privacy-first porque ambas
+restricciones son reales, no aspiracionales.
 
-## The rule
+## La regla
 
-**Capture and extraction must work in airplane mode once the required model is on the device.**
+**La captura y la extracción deben funcionar en modo avión una vez que el modelo requerido está en el dispositivo.**
 
-Everything below either supports that rule or explains the one narrow exception to it.
+Todo lo que sigue apoya esa regla o explica la única excepción estrecha a ella.
 
-## Two kinds of traffic, never confused
+## Dos tipos de tráfico, nunca confundidos
 
-### INFERENCE TRAFFIC — must be zero
+### TRÁFICO DE INFERENCIA — debe ser cero
 
-No observation content ever crosses the network. There is no cloud model, no inference API, no
-remote prompt, no remote validation.
+Ningún contenido de observación cruza jamás la red. No hay modelo en la nube, ni API de inferencia, ni
+prompt remoto, ni validación remota.
 
-Verifiable properties today:
+Propiedades verificables hoy:
 
-- The only AI dependency is `@qvac/sdk`, running local llama.cpp and whisper.cpp workers.
-- `@qvac/sdk` is imported only under `src/infrastructure/qvac/`: `qvac-observation-extraction.ts`
-  (text) and `qvac-speech-to-text.ts` (voice). No other file in `src/` imports it.
-- No HTTP client or `fetch` call exists anywhere in `src/`.
-- The production renderer CSP permits only `connect-src 'self'`; it carries no development
-  WebSocket or external network endpoint. Development alone permits `ws://localhost:*` for the
-  Vite development socket.
-- The renderer references no remote font, CDN, or external URL.
-- `qvac.config.json` configures no remote inference endpoint, because 0.19.0 has none.
+- La única dependencia de IA es `@qvac/sdk`, que ejecuta workers locales de llama.cpp y whisper.cpp.
+- `@qvac/sdk` se importa solo bajo `src/infrastructure/qvac/`: `qvac-observation-extraction.ts`
+  (texto) y `qvac-speech-to-text.ts` (voz). Ningún otro archivo en `src/` lo importa.
+- No existe ningún cliente HTTP ni llamada `fetch` en ningún lugar de `src/`.
+- La CSP del renderer de producción solo permite `connect-src 'self'`; no lleva ningún WebSocket de
+  desarrollo ni endpoint de red externo. Solo el entorno de desarrollo permite `ws://localhost:*` para el
+  socket de desarrollo de Vite.
+- El renderer no referencia ninguna fuente remota, CDN, ni URL externa.
+- `qvac.config.json` no configura ningún endpoint de inferencia remoto, porque 0.19.0 no tiene ninguno.
 
-### OPTIONAL SYNC AND MODEL DOWNLOAD TRAFFIC — narrow and explicit
+### TRÁFICO OPCIONAL DE SINCRONIZACIÓN Y DESCARGA DE MODELO — estrecho y explícito
 
-Only one kind of network operation exists: on first initialization of a given model, the QVAC
-model registry may download that model's artifact to its local cache. There are now two models
-that can each independently trigger this, once each, the first time they are used.
+Solo existe un tipo de operación de red: en la primera inicialización de un modelo dado, el registro de
+modelos de QVAC puede descargar el artefacto de ese modelo a su caché local. Ahora hay dos modelos
+que pueden disparar esto de forma independiente, una vez cada uno, la primera vez que se usan.
 
-| Property               | Value                                                                                                            |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| What is sent           | A model request. **No observation data, ever, for either model.**                                                |
-| When                   | First initialization of a given model only, when it is not already cached                                        |
-| Required for inference | No. Once cached, inference is fully local                                                                        |
-| How to avoid entirely  | Set `CIB_QVAC_MODEL_PATH` (text) or `CIB_QVAC_VOICE_MODEL_PATH` (voice) to a locally provisioned file            |
-| Size                   | ≈365 MiB (default text model) + ≈42 MiB (`WHISPER_TINY_Q8_0`, voice). See [MODEL_STRATEGY.md](MODEL_STRATEGY.md) |
+| Propiedad                         | Valor                                                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Qué se envía                      | Una solicitud de modelo. **Nunca datos de observación, para ninguno de los dos modelos.**                               |
+| Cuándo                            | Solo en la primera inicialización de un modelo dado, cuando aún no está en caché                                        |
+| ¿Es requerido para la inferencia? | No. Una vez en caché, la inferencia es completamente local                                                              |
+| Cómo evitarlo por completo        | Establecer `CIB_QVAC_MODEL_PATH` (texto) o `CIB_QVAC_VOICE_MODEL_PATH` (voz) a un archivo aprovisionado localmente      |
+| Tamaño                            | ≈365 MiB (modelo de texto por defecto) + ≈42 MiB (`WHISPER_TINY_Q8_0`, voz). Ver [MODEL_STRATEGY.md](MODEL_STRATEGY.md) |
 
-For a genuinely disconnected deployment, provision the model file out of band and set
-`CIB_QVAC_MODEL_PATH`. That path performs no network access at all.
+Para un despliegue genuinamente desconectado, aprovisione el archivo de modelo fuera de banda y establezca
+`CIB_QVAC_MODEL_PATH`. Esa vía no realiza ningún acceso a la red en absoluto.
 
-**Sync is not implemented.** There is no server, no account, no upload. If synchronisation is
-ever added it is a separate, opt-in, clearly labelled feature, and it must never be on the
-critical path — see the sync section below.
+**La sincronización no está implementada.** No hay servidor, ni cuenta, ni subida. Si alguna vez se agrega
+sincronización, será una función separada, opcional (opt-in) y claramente etiquetada, y nunca debe estar en
+la ruta crítica — ver la sección de sincronización más abajo.
 
-## Data that must never leave the device
+## Datos que nunca deben salir del dispositivo
 
-| Data                              | Where it lives                                                                                                                                                                                                                                                                                               |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Raw observation text              | `evidence_items.raw_text`, local SQLite                                                                                                                                                                                                                                                                      |
-| Voice transcripts                 | Not a distinct category: a transcript is placed into the ordinary text input for review and, once sent, is stored exactly like `Raw observation text` above — no `Voice`-tagged evidence table exists                                                                                                        |
-| Audio artifacts                   | **Deliberately never persisted.** Recorded audio is written to a single-use OS temp file only for the duration of one `transcribe()` call and is always deleted immediately after, success or failure (`src/main/voice-transcription.ts`). There is no `local_artifact_uri` and no setting that changes this |
-| Photos (**PLANNED**)              | same                                                                                                                                                                                                                                                                                                         |
-| Facility names, cities, countries | `customers`, `observation_sessions`                                                                                                                                                                                                                                                                          |
-| Reporter identity                 | `observation_sessions.observer_id`, `observer_display_name`                                                                                                                                                                                                                                                  |
-| Prompts sent to the model         | constructed in memory, never persisted or logged                                                                                                                                                                                                                                                             |
-| Generated tokens                  | drained and discarded; only the validated final JSON is kept                                                                                                                                                                                                                                                 |
+| Dato                                       | Dónde vive                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Texto crudo de observación                 | `evidence_items.raw_text`, SQLite local                                                                                                                                                                                                                                                                                                                                         |
+| Transcripciones de voz                     | No es una categoría distinta: una transcripción se coloca en el campo de texto ordinario para revisión y, una vez enviada, se almacena exactamente igual que el "Texto crudo de observación" de arriba — no existe ninguna tabla de evidencia etiquetada como `Voice`                                                                                                           |
+| Artefactos de audio                        | **Deliberadamente nunca persistidos.** El audio grabado se escribe en un archivo temporal del sistema operativo de un solo uso solo durante la duración de una llamada a `transcribe()`, y siempre se elimina inmediatamente después, con éxito o con fallo (`src/main/voice-transcription.ts`). No existe ningún `local_artifact_uri` ni ninguna configuración que cambie esto |
+| Fotos (**PLANIFICADO**)                    | igual                                                                                                                                                                                                                                                                                                                                                                           |
+| Nombres de instalaciones, ciudades, países | `customers`, `observation_sessions`                                                                                                                                                                                                                                                                                                                                             |
+| Identidad del reportero                    | `observation_sessions.observer_id`, `observer_display_name`                                                                                                                                                                                                                                                                                                                     |
+| Prompts enviados al modelo                 | construidos en memoria, nunca persistidos ni registrados en logs                                                                                                                                                                                                                                                                                                                |
+| Tokens generados                           | drenados y descartados; solo se conserva el JSON final validado                                                                                                                                                                                                                                                                                                                 |
 
-## Local storage
+## Almacenamiento local
 
-- SQLite via Node's built-in `node:sqlite`, WAL mode, foreign keys on.
-- Default location is Electron's per-user `userData` directory. `CIB_DATABASE_PATH` overrides
-  it. The seed script writes `data/customer-installed-base.sqlite`, which is gitignored.
-- **Not encrypted at rest — PLANNED.** The prototype relies on operating-system user account
-  isolation and full-disk encryption. Database encryption is a real gap for a production
-  deployment and is recorded as an open decision in [DECISIONS.md](DECISIONS.md).
-- Saved observations are append-only. There is no bulk delete or export path today.
+- SQLite mediante el `node:sqlite` incorporado de Node, modo WAL, claves foráneas activadas.
+- La ubicación por defecto es el directorio `userData` por usuario de Electron. `CIB_DATABASE_PATH` la
+  reemplaza. El script de semilla escribe `data/customer-installed-base.sqlite`, que está en el gitignore.
+- **No cifrado en reposo — PLANIFICADO.** El prototipo depende del aislamiento de cuentas de usuario del sistema
+  operativo y del cifrado de disco completo. El cifrado de la base de datos es una brecha real para un
+  despliegue de producción y está registrado como una decisión abierta en [DECISIONS.md](DECISIONS.md).
+- Las observaciones guardadas son de solo anexado (append-only). Hoy no hay ninguna vía de borrado masivo ni exportación.
 
-## Logging
+## Registro en logs
 
-- `qvac.config.json` sets `loggerLevel: "warn"` and `loggerConsoleOutput: false`.
-- The QVAC adapter deliberately does not log `contentDelta` events. The code says so at the
-  drain loop, because that is the one place where a well-meaning debug line would write
-  hospital observation content to a log.
-- **Rule:** never log raw observation text, transcripts, prompts, generated tokens, facility
-  names, or reporter identity. Log state transitions and error classes instead.
-- Electron and Node may write crash information to the OS. That is outside application control
-  and is called out here so it is not mistaken for a guarantee.
+- `qvac.config.json` establece `loggerLevel: "warn"` y `loggerConsoleOutput: false`.
+- El adaptador de QVAC deliberadamente no registra en logs los eventos `contentDelta`. El código lo dice
+  explícitamente en el bucle de drenado, porque ese es el único lugar donde una línea de depuración bien intencionada
+  escribiría contenido de observación hospitalaria en un log.
+- **Regla:** nunca registrar en logs texto crudo de observación, transcripciones, prompts, tokens generados, nombres
+  de instalaciones, ni identidad del reportero. Registrar en su lugar transiciones de estado y clases de error.
+- Electron y Node pueden escribir información de fallos al sistema operativo. Eso está fuera del control de la
+  aplicación y se menciona aquí para que no se confunda con una garantía.
 
-## Analytics, telemetry, crash reporting
+## Analítica, telemetría, reporte de fallos
 
-**None. All three are prohibited.**
+**Ninguno. Los tres están prohibidos.**
 
-No analytics SDK, no telemetry endpoint, no crash reporter, no remote feature flags, no remote
-configuration. Adding any of them requires an explicit product decision recorded in
-DECISIONS.md, and even then must exclude observation content entirely.
+Sin SDK de analítica, sin endpoint de telemetría, sin reporte de fallos, sin feature flags remotos, sin
+configuración remota. Agregar cualquiera de ellos requiere una decisión de producto explícita registrada en
+DECISIONS.md, y aun así debe excluir por completo el contenido de las observaciones.
 
-## Behaviour with no network
+## Comportamiento sin red
 
-| Operation                                       | Works offline                       |
-| ----------------------------------------------- | ----------------------------------- |
-| Application launch                              | yes                                 |
-| Database read and write                         | yes                                 |
-| Text capture                                    | yes                                 |
-| Extraction, model already local                 | yes                                 |
-| Voice dictation, model already local            | yes                                 |
-| Follow-up questions, corrections, review, save  | yes, all deterministic domain logic |
-| Customer 360 and Dashboard                      | yes                                 |
-| Seed                                            | yes                                 |
-| `npm test`                                      | yes                                 |
-| `npm run qvac:smoke`, model already local       | yes                                 |
-| `npm run qvac:voice-smoke`, model already local | yes                                 |
-| First download of either model                  | **no**, this is the one exception   |
+| Operación                                                  | Funciona offline                        |
+| ---------------------------------------------------------- | --------------------------------------- |
+| Arranque de la aplicación                                  | sí                                      |
+| Lectura y escritura de la base de datos                    | sí                                      |
+| Captura de texto                                           | sí                                      |
+| Extracción, con el modelo ya local                         | sí                                      |
+| Dictado de voz, con el modelo ya local                     | sí                                      |
+| Preguntas de seguimiento, correcciones, revisión, guardado | sí, toda lógica de dominio determinista |
+| Customer 360 y Dashboard                                   | sí                                      |
+| Semilla                                                    | sí                                      |
+| `npm test`                                                 | sí                                      |
+| `npm run qvac:smoke`, con el modelo ya local               | sí                                      |
+| `npm run qvac:voice-smoke`, con el modelo ya local         | sí                                      |
+| Primera descarga de cualquiera de los dos modelos          | **no**, esta es la única excepción      |
 
-There is no degraded mode and no silent fallback. If QVAC cannot start or the model cannot
-load, the user sees an error with the real state. The engine badge always names the engine that
-actually ran.
+No hay ningún modo degradado ni respaldo silencioso. Si QVAC no puede iniciar o el modelo no puede
+cargarse, el usuario ve un error con el estado real. El badge del motor siempre nombra el motor que
+realmente se ejecutó.
 
-## Electron hardening
+## Hardening de Electron
 
-Verified in `src/main/index.ts`:
+Verificado en `src/main/index.ts`:
 
 - `contextIsolation: true`
 - `nodeIntegration: false`
 - `sandbox: true`
-- `setWindowOpenHandler` denies all new windows
-- The preload exposes a narrow typed API over named IPC channels only
-- Every IPC payload is parsed with Zod before a use case runs
+- `setWindowOpenHandler` deniega todas las ventanas nuevas
+- El preload expone una API tipada acotada solo sobre canales de IPC nombrados
+- Cada payload de IPC se parsea con Zod antes de que se ejecute un caso de uso
 
-The renderer cannot reach the filesystem, the SDK, or arbitrary channels.
+El renderer no puede alcanzar el sistema de archivos, el SDK, ni canales arbitrarios.
 
-## Future synchronisation — PROPOSED, not implemented
+## Sincronización futura — PROPUESTO, no implementado
 
-If consolidating observations across colleagues is ever required, these constraints apply:
+Si alguna vez se requiere consolidar observaciones entre colegas, aplican estas restricciones:
 
-1. Opt-in per user, never a default.
-2. Local capture and extraction must keep working with sync unavailable. Sync is never on the
-   critical path.
-3. What is synchronised must be enumerable and reviewable before it is sent.
-4. Transport encrypted; at-rest encryption on the receiving side decided before any code.
-5. Raw audio and photos are the highest-risk payloads and should be the last thing considered,
-   if ever.
-6. Recorded in DECISIONS.md before implementation, not after.
+1. Opcional (opt-in) por usuario, nunca por defecto.
+2. La captura y extracción locales deben seguir funcionando con la sincronización no disponible. La sincronización nunca está en
+   la ruta crítica.
+3. Lo que se sincronice debe ser enumerable y revisable antes de enviarse.
+4. Transporte cifrado; el cifrado en reposo del lado receptor decidido antes de cualquier código.
+5. El audio crudo y las fotos son los payloads de mayor riesgo y deberían ser lo último que se considere,
+   si es que alguna vez se hace.
+6. Registrado en DECISIONS.md antes de implementarse, no después.
 
-## Threat model, briefly
+## Modelo de amenazas, brevemente
 
-| Threat                                                 | Mitigation today                                                                                  |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| Observation content reaching a third-party AI provider | No cloud provider exists in the dependency graph. Only one file imports the SDK                   |
-| Content leaking through logs                           | Console output disabled, token logging deliberately omitted, rule documented                      |
-| Content leaking through analytics                      | No analytics dependency exists                                                                    |
-| Renderer compromise reaching the filesystem            | Context isolation, sandbox, no node integration, validated IPC                                    |
-| Device theft                                           | **Gap.** Relies on OS account and disk encryption. See the storage section                        |
-| Malicious dependency exfiltrating data                 | **Partial.** Dependency count is small and reviewed. No lockfile audit gate exists — **PROPOSED** |
-| Model download revealing that the app is in use        | Accepted, and avoidable with `CIB_QVAC_MODEL_PATH`                                                |
+| Amenaza                                                        | Mitigación hoy                                                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Contenido de observación llegando a un proveedor de IA externo | No existe ningún proveedor en la nube en el grafo de dependencias. Solo un archivo importa el SDK                               |
+| Fuga de contenido a través de logs                             | Salida de consola deshabilitada, registro de tokens deliberadamente omitido, regla documentada                                  |
+| Fuga de contenido a través de analítica                        | No existe ninguna dependencia de analítica                                                                                      |
+| Compromiso del renderer alcanzando el sistema de archivos      | Aislamiento de contexto, sandbox, sin integración de node, IPC validado                                                         |
+| Robo del dispositivo                                           | **Brecha.** Depende de la cuenta del sistema operativo y del cifrado de disco. Ver la sección de almacenamiento                 |
+| Dependencia maliciosa exfiltrando datos                        | **Parcial.** El número de dependencias es pequeño y revisado. No existe ninguna puerta de auditoría de lockfile — **PROPUESTO** |
+| La descarga del modelo revela que la app está en uso           | Aceptado, y evitable con `CIB_QVAC_MODEL_PATH`                                                                                  |
 
-## How to verify
+## Cómo verificar
 
-Use the `offline-validation` skill. It has the static scan commands, the airplane-mode
-procedure, and the pass criteria.
+Use la skill `offline-validation`. Tiene los comandos de análisis estático, el procedimiento de
+modo avión, y los criterios de aprobación.
 
-The pre-demo human checklist — physical network disconnection, full capture-to-save flow, Customer
-360 and Dashboard checks — lives in
-[docs/DEMO.md](DEMO.md#checklist-de-validación-offline--validación-humana-requerida) and is marked
-**HUMAN VALIDATION REQUIRED** until a person has executed and checked it off. No agent session has
-performed a physical airplane-mode run.
+La lista de validación humana previa al demo —desconexión física de red, flujo completo de captura a
+guardado, verificaciones de Customer 360 y Dashboard— vive en
+[docs/DEMO.md](DEMO.md#checklist-de-validación-offline--validación-humana-requerida) y está marcada
+**VALIDACIÓN HUMANA REQUERIDA** hasta que una persona la haya ejecutado y marcado. Ninguna sesión de agente ha
+realizado una ejecución física en modo avión.

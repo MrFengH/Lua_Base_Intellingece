@@ -1,6 +1,7 @@
 import type {
   ApproximateAge,
   ConfidenceAssessment,
+  ConfidenceLevel,
   DuplicateReason,
   DuplicateResolution,
   EvidenceRelationship,
@@ -40,6 +41,15 @@ export interface InstalledBaseItem {
   fieldProvenance: Readonly<Record<string, FieldProvenance>>;
 }
 
+/** One raw evidence entry within a session, with the assistant question it answered (if any)
+ * kept alongside it purely as display context — never a domain fact in its own right. */
+export interface ObservationEvidenceEntryView {
+  id: string;
+  rawText: string | null;
+  followUpQuestion: string | null;
+  capturedAt: string;
+}
+
 export interface ObservationEvidenceView {
   sessionId: string;
   equipmentObservationId: string;
@@ -48,6 +58,10 @@ export interface ObservationEvidenceView {
   visitId: string;
   rawInput: string | null;
   source: string;
+  /** The session's individual evidence entries, in capture order. Older sessions saved before
+   * this field existed still populate it (one entry per stored evidence item), just without
+   * `followUpQuestion` context. */
+  items: readonly ObservationEvidenceEntryView[];
 }
 
 export interface DuplicateReviewObservation {
@@ -97,12 +111,47 @@ export interface Customer360View {
   projectionStrategy: 'latest-per-signature-v1';
 }
 
+/** One country row for the installed-base geography chart. `equipmentCount` is the projected
+ * quantity (the same convention `equipmentByModality` uses); `visitCount` is the number of
+ * observation sessions recorded for that country and is shown only as secondary context. */
+export interface CountryEquipmentCount {
+  country: string;
+  equipmentCount: number;
+  visitCount: number;
+}
+
+/** One band of the age distribution — see `classifyAgeBand` in `@/domain/rules/age-bands` for
+ * how a projected group's `approximateAge` is placed here. Purely descriptive; carries no
+ * freshness/obsolescence meaning. */
+export interface AgeBandCount {
+  label: string;
+  count: number;
+}
+
+/** How many projected groups are missing a given field outright versus how many explicitly
+ * declared it unknown — the two must never be conflated, per docs/DATA_SCHEMA.md's
+ * `Missing`/`DeclaredUnknown` distinction. */
+export interface FieldEnrichmentGap {
+  field: 'manufacturer' | 'model' | 'approximateAge' | 'quantity';
+  missing: number;
+  declaredUnknown: number;
+}
+
 export interface DashboardView {
   totalCustomers: number;
   totalEquipmentObserved: number;
   equipmentByModality: Readonly<Record<string, number>>;
-  observationsByCountry: Readonly<Record<string, number>>;
-  agingEquipment: number | null;
+  equipmentByCountry: readonly CountryEquipmentCount[];
+  equipmentByStatus: Readonly<Record<ObservationStatus, number>>;
+  equipmentByConfidence: Readonly<Record<ConfidenceLevel, number>>;
   incompleteObservations: number;
-  agingPolicy: 'Not configured';
+  pendingDuplicateCandidates: number;
+  /** Projected quantity whose `approximateAge` is anything other than `{ type: 'unknown' }`. */
+  ageKnown: number;
+  /** Projected quantity whose `approximateAge` is `{ type: 'unknown' }`. */
+  ageUnknown: number;
+  /** Always carries every band label from `AGE_BAND_LABELS`, zero-filled, in display order. */
+  ageBands: readonly AgeBandCount[];
+  /** Always carries all four fields, ordered by `missing` descending. */
+  fieldEnrichmentGaps: readonly FieldEnrichmentGap[];
 }

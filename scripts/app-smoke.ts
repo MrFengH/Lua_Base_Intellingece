@@ -33,6 +33,12 @@ interface AppProbe {
   runtimeStatus: string | null;
 }
 
+interface ComposerProbe {
+  input: string;
+  processing: boolean;
+  optimisticTexts: string[];
+}
+
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -215,6 +221,149 @@ const waitForProbe = async (
   throw new Error('The preload API or React interface did not become ready.');
 };
 
+const submitThroughComposer = async (
+  evaluate: (expression: string) => Promise<unknown>,
+  send: (method: string, params?: Record<string, unknown>) => Promise<CdpMessage>,
+  text: string,
+): Promise<ComposerProbe> => {
+  await evaluate(`(() => {
+    const textarea = document.querySelector('.composer textarea');
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      throw new Error('Capture composer was not available.');
+    }
+    textarea.focus();
+  })()`);
+  await send('Input.insertText', { text });
+  await delay(25);
+  await evaluate(`(() => {
+    const textarea = document.querySelector('.composer textarea');
+    const button = document.querySelector('.composer .primary-button');
+    if (!(textarea instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement)) {
+      throw new Error('Capture composer was not available.');
+    }
+    if (!button.disabled) return;
+    const propsKey = Object.keys(textarea).find((key) => key.startsWith('__reactProps'));
+    const onChange = propsKey
+      ? textarea[propsKey]?.onChange
+      : undefined;
+    if (typeof onChange !== 'function') {
+      throw new Error('Could not drive the controlled capture textarea.');
+    }
+    onChange({ target: { value: textarea.value } });
+  })()`);
+  await delay(25);
+  const value = await evaluate(`(async () => {
+    const textarea = document.querySelector('.composer textarea');
+    const button = document.querySelector('.composer .primary-button');
+    const transcript = document.querySelector('.transcript-log');
+    if (!(textarea instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement)) {
+      throw new Error('Capture composer was not available.');
+    }
+    if (!(transcript instanceof HTMLDivElement)) {
+      throw new Error('Capture transcript was not available.');
+    }
+    const observed = { input: textarea.value, processing: false, optimisticTexts: [] };
+    const immediateState = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        observer.disconnect();
+        reject(new Error('Optimistic renderer state was not observed.'));
+      }, 2_000);
+      const inspect = () => {
+        if (textarea.value === '') observed.input = '';
+        if (button.textContent?.includes('Procesando') === true) observed.processing = true;
+        const optimisticTexts = [...document.querySelectorAll('[data-message-state="optimistic"]')]
+          .map((node) => node.textContent ?? '');
+        if (optimisticTexts.length > 0) observed.optimisticTexts = optimisticTexts;
+        if (
+          observed.input === '' &&
+          observed.processing &&
+          observed.optimisticTexts.length > 0
+        ) {
+          clearTimeout(timeout);
+          observer.disconnect();
+          resolve(observed);
+        }
+      };
+      const observer = new MutationObserver(inspect);
+      observer.observe(document.querySelector('.capture-screen'), {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      inspect();
+    });
+    button.click();
+    // A second event in the same renderer turn exercises the synchronous in-flight guard before
+    // React has any opportunity to commit the disabled state.
+    button.click();
+    return await immediateState;
+  })()`);
+  if (!value || typeof value !== 'object') throw new Error('Invalid composer probe result.');
+  const candidate = value as Partial<ComposerProbe>;
+  if (
+    typeof candidate.input !== 'string' ||
+    typeof candidate.processing !== 'boolean' ||
+    !Array.isArray(candidate.optimisticTexts)
+  ) {
+    throw new Error(`Invalid composer probe result: ${JSON.stringify(value)}`);
+  }
+  return candidate as ComposerProbe;
+};
+
+const waitForSubmittedTurn = async (
+  evaluate: (expression: string) => Promise<unknown>,
+  text: string,
+): Promise<{ userMatches: number; assistantMessages: number }> => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const value = await evaluate(`(() => {
+      const userTexts = [...document.querySelectorAll('.transcript-entry.role-user .transcript-text')]
+        .map((node) => node.textContent ?? '');
+      return {
+        userMatches: userTexts.filter((content) => content === ${JSON.stringify(text)}).length,
+        assistantMessages: document.querySelectorAll('.transcript-entry.role-assistant').length,
+        optimisticMessages: document.querySelectorAll('[data-message-state="optimistic"]').length,
+        processing: document.querySelector('.composer .primary-button')?.textContent
+          ?.includes('Procesando') === true,
+      };
+    })()`);
+    const candidate = value as {
+      userMatches?: number;
+      assistantMessages?: number;
+      optimisticMessages?: number;
+      processing?: boolean;
+    };
+    if (
+      candidate.userMatches === 1 &&
+      (candidate.assistantMessages ?? 0) > 0 &&
+      candidate.optimisticMessages === 0 &&
+      candidate.processing === false
+    ) {
+      return {
+        userMatches: candidate.userMatches,
+        assistantMessages: candidate.assistantMessages ?? 0,
+      };
+    }
+    await delay(25);
+  }
+  throw new Error(`Capture turn did not settle exactly once: ${text}`);
+};
+
+const waitForCaptureComposer = async (
+  evaluate: (expression: string) => Promise<unknown>,
+): Promise<void> => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const captureId = await evaluate(
+      `document.querySelector('.transcript-log')?.getAttribute('data-capture-id') ?? null`,
+    );
+    if (typeof captureId === 'string' && captureId.length > 0) return;
+    await delay(25);
+  }
+  throw new Error('Capture session did not become ready.');
+};
+
 const waitForExit = async (electronProcess: ChildProcess): Promise<void> => {
   if (electronProcess.exitCode !== null) return;
   await Promise.race([
@@ -274,9 +423,61 @@ const run = async (): Promise<void> => {
     await cdp.send('Runtime.enable');
     await cdp.send('Log.enable');
     await cdp.send('Page.enable');
-    await cdp.send('Page.reload', { ignoreCache: true });
     const probe = await waitForProbe(cdp.evaluate);
-    await delay(250);
+    await waitForCaptureComposer(cdp.evaluate);
+
+    const completeObservation =
+      'Estoy en Hospital DemoCare Pacific, en Panamá. Vi dos resonadores NovaMed modelo NM-MR 700 de unos 7 años y un tomógrafo Aurelia Health de aproximadamente 5 años.';
+    const immediateObservation = await submitThroughComposer(
+      cdp.evaluate,
+      cdp.send,
+      completeObservation,
+    );
+    if (
+      immediateObservation.input !== '' ||
+      !immediateObservation.processing ||
+      immediateObservation.optimisticTexts.filter((text) => text.includes(completeObservation))
+        .length !== 1
+    ) {
+      throw new Error(
+        `Complete observation did not render immediately: ${JSON.stringify(immediateObservation)}`,
+      );
+    }
+    await waitForSubmittedTurn(cdp.evaluate, completeObservation);
+    const structuredEquipmentVisible = await cdp.evaluate(
+      `document.querySelectorAll('.equipment-ledger tbody tr').length > 0`,
+    );
+    if (structuredEquipmentVisible !== true) {
+      throw new Error(
+        'Complete observation did not produce a visible structured equipment record.',
+      );
+    }
+
+    const followUpAnswer = 'NovaMed';
+    const immediateFollowUp = await submitThroughComposer(cdp.evaluate, cdp.send, followUpAnswer);
+    if (
+      immediateFollowUp.input !== '' ||
+      immediateFollowUp.optimisticTexts.filter((text) => text.includes(followUpAnswer)).length !== 1
+    ) {
+      throw new Error(`Follow-up did not render immediately: ${JSON.stringify(immediateFollowUp)}`);
+    }
+    await waitForSubmittedTurn(cdp.evaluate, followUpAnswer);
+
+    await cdp.send('Page.reload', { ignoreCache: true });
+    await waitForProbe(cdp.evaluate);
+    await waitForCaptureComposer(cdp.evaluate);
+    const greeting = 'hola';
+    const immediateGreeting = await submitThroughComposer(cdp.evaluate, cdp.send, greeting);
+    if (
+      immediateGreeting.input !== '' ||
+      !immediateGreeting.processing ||
+      immediateGreeting.optimisticTexts.filter((text) => text.includes(greeting)).length !== 1
+    ) {
+      throw new Error(
+        `Optimistic send did not render immediately: ${JSON.stringify(immediateGreeting)}`,
+      );
+    }
+    await waitForSubmittedTurn(cdp.evaluate, greeting);
 
     if (cdp.errors.length > 0) {
       throw new Error(`Renderer or preload errors were reported:\n${JSON.stringify(cdp.errors)}`);
@@ -308,6 +509,14 @@ const run = async (): Promise<void> => {
     console.log('PASS: getInferenceStatus returned Development Mock ready');
     console.log('PASS: React rendered the capture interface without console errors');
     console.log('PASS: SQLite database and application schema were created');
+    console.log(
+      'PASS: user messages rendered optimistically, cleared input, and showed processing',
+    );
+    console.log(
+      'PASS: same-turn duplicate submit was rejected and authoritative state rendered once',
+    );
+    console.log('PASS: a follow-up answer rendered and reconciled exactly once');
+    console.log('PASS: a complete observation produced visible structured equipment');
 
     socket.send(JSON.stringify({ id: 10_000, method: 'Browser.close' }));
     await waitForExit(electronProcess);
@@ -317,7 +526,18 @@ const run = async (): Promise<void> => {
       electronProcess.kill();
       await waitForExit(electronProcess);
     }
-    rmSync(temporaryDirectory, { recursive: true, force: true });
+    try {
+      rmSync(temporaryDirectory, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    } catch (error) {
+      // Chromium utility processes can retain Windows file handles briefly after the browser has
+      // exited. A cleanup race must not turn successful application assertions into a smoke-test
+      // failure; the OS temp directory remains the only affected location.
+      console.warn(
+        `WARN: temporary smoke directory could not be removed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 };
 
