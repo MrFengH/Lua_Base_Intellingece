@@ -1408,7 +1408,7 @@ const CustomersPage = ({
                 </div>
 
                 <div className="section-title">
-                  <h3>Proyección actual del parque instalado</h3>
+                  <h3>Proyección actual de la base instalada</h3>
                 </div>
                 <div className="installed-base-ledger">
                   <div className="ledger-head-row">
@@ -1668,7 +1668,7 @@ const DashboardPage = ({ dashboard }: { dashboard: DashboardView | null }): Reac
   return (
     <section className="dashboard-page">
       <div className="page-heading">
-        <h1>Resumen del parque instalado</h1>
+        <h1>Resumen de la base instalada</h1>
         <span className="local-chip">Datos en el dispositivo</span>
       </div>
       {!dashboard ? (

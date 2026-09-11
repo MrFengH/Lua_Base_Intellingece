@@ -375,7 +375,7 @@ El ciclo de vida de resolución es deliberadamente pequeño. Un candidato creado
 `NotDuplicate`, `SameEquipment` o `CorroboratingEvidence`. La elección actualiza solo la columna
 `resolution` del candidato; lo mueve al historial resuelto y sobrevive a los reinicios de la aplicación. No
 elimina, fusiona ni actualiza ninguna de las dos observaciones de equipo, su evidencia, cantidad, estado,
-confianza, ni la proyección de parque instalado. Un candidato ya resuelto no se ofrece para una segunda
+confianza, ni la proyección de la base instalada. Un candidato ya resuelto no se ofrece para una segunda
 decisión.
 
 **Qué mejoraría esto — PROPUESTO, no implementado:**

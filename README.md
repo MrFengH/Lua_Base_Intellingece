@@ -16,10 +16,10 @@ sintético por construcción.
 
 ## El problema
 
-Los colegas de campo que visitan hospitales observan rutinariamente el parque instalado de equipo
+Los colegas de campo que visitan hospitales observan rutinariamente la base instalada de equipo
 médico — qué hay, más o menos qué tan antiguo es, quién lo fabricó — pero ese conocimiento suele
 quedar como una nota sin estructurar, o en la memoria de alguien. Convertirlo hoy en un registro de
-parque instalado utilizable y consultable implica captura manual de datos, lo cual es lento,
+base instalada utilizable y consultable implica captura manual de datos, lo cual es lento,
 inconsistente y propenso a sobrescribir silenciosamente lo que realmente se dijo con lo que un
 formulario exigía.
 

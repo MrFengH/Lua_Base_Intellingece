@@ -389,7 +389,7 @@ nadie con autoridad de producto había suministrado umbrales de negocio, y `docs
 como no-objetivo explícito "no agregar umbrales de antigüedad ni una política de antigüedad" hasta que
 alguien lo hiciera. El Panel seguía cumpliendo solo el mínimo de agregación y no respondía preguntas que un
 usuario de negocio haría de inmediato: cuántos equipos hay por país, qué tan confiable es la información, o
-qué tan viejo es el parque instalado, aunque la antigüedad estructurada ya estuviera en cada grupo
+qué tan vieja es la base instalada, aunque la antigüedad estructurada ya estuviera en cada grupo
 proyectado.
 
 **Decisión:** Un producto owner (la persona que da esta instrucción, 2026-09-10) suministró explícitamente
